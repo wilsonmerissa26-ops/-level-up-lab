@@ -17,7 +17,8 @@ assert.match(source, /if\(!await save\("next question"\)\)return/); pass('next-q
 assert.match(source, /if\(!await save\("finish lesson"\)\)return/); pass('lesson completion fail-stops on save failure');
 assert.match(source, /if\(!await save\("start lesson"\)\)return/); pass('lesson start fail-stops on save failure');
 assert.match(source, /writeSequence = Promise\.resolve\(\)/); pass('writes are serialized before draft autosave is enabled');
-assert.match(source, /const snapshot=JSON\.parse\(JSON\.stringify\(state\)\)/); pass('queued writes use immutable state snapshots');
+assert.match(source, /const candidate=JSON\.parse\(JSON\.stringify\(state\)\)/); pass('queued writes use immutable candidate state before revision assignment');
+assert.match(source, /candidate\.stateRevision=revision/); pass('revision belongs to the exact immutable candidate written');
 assert.match(source, />Save & Exit</); pass('student lesson UI exposes Save & Exit');
 assert.match(source, /onclick="window\.MLUL\.manualSave\(\)"/); pass('manual Save is wired in the UI');
 
@@ -32,6 +33,7 @@ afterCrash.activeSession.status='INTERRUPTED_PRESERVED';
 assert.equal(afterCrash.evidence.length,1); pass('submitted evidence survives synthetic crash/reload');
 assert.equal(afterCrash.activeSession.draft.freeAnswer,'I do not know'); pass('unsubmitted draft survives synthetic crash/reload');
 assert.equal(afterCrash.activeSession.itemIndex,1); pass('resume point survives synthetic crash/reload');
+assert.notEqual(afterCrash.activeSession.status,'ACTIVE'); pass('crash recovery does not auto-resume the interrupted session');
 const resumed = structuredClone(afterCrash.activeSession); resumed.status='ACTIVE';
 assert.equal(resumed.draft.confidence,'guess'); pass('explicit resume restores saved draft metadata');
 
