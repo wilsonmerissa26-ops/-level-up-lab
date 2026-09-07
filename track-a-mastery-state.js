@@ -51,11 +51,22 @@
     const now=new Date(nowIso).getTime();
     const ordered=['Day 2','Day 7','Transfer'];
     if(canonicalState==='PROVISIONAL'){
-      for(const checkpoint of ordered){const t=latestTask(tasks,skillId,checkpoint);if(!t)return null;if(['FAILED','UNUSABLE'].includes(t.status))return {kind:'REPAIR_REQUIRED',task:t};if(t.status==='SCHEDULED'){if(!t.dueAt||new Date(t.dueAt).getTime()<=now)return {kind:'TASK_DUE',task:t};return {kind:'WAITING',task:t}}if(t.status==='LOCKED')return {kind:'WAITING',task:t}}
+      for(const checkpoint of ordered){
+        const t=latestTask(tasks,skillId,checkpoint);if(!t)return null;
+        if(t.status==='FAILED')return {kind:'REPAIR_REQUIRED',task:t};
+        if(t.status==='UNUSABLE')return {kind:'REPLACE_REQUIRED',task:t};
+        if(t.status==='SCHEDULED'){if(!t.dueAt||new Date(t.dueAt).getTime()<=now)return {kind:'TASK_DUE',task:t};return {kind:'WAITING',task:t}}
+        if(t.status==='LOCKED')return {kind:'WAITING',task:t};
+      }
       return {kind:'READY_FOR_MASTERY_DECISION',task:null};
     }
     if(canonicalState==='MASTERED'){
-      const m=latestTask(tasks,skillId,'Day 21');if(!m)return null;if(['FAILED','UNUSABLE'].includes(m.status))return {kind:'MAINTENANCE_REPAIR_REQUIRED',task:m};if(m.status==='SCHEDULED'){if(new Date(m.dueAt).getTime()<=now)return {kind:'MAINTENANCE_DUE',task:m};return {kind:'WAITING',task:m}}if(m.status==='COMPLETED')return {kind:'DONE',task:m};return {kind:'WAITING',task:m};
+      const m=latestTask(tasks,skillId,'Day 21');if(!m)return null;
+      if(m.status==='FAILED')return {kind:'MAINTENANCE_REPAIR_REQUIRED',task:m};
+      if(m.status==='UNUSABLE')return {kind:'REPLACE_REQUIRED',task:m};
+      if(m.status==='SCHEDULED'){if(new Date(m.dueAt).getTime()<=now)return {kind:'MAINTENANCE_DUE',task:m};return {kind:'WAITING',task:m}}
+      if(m.status==='COMPLETED')return {kind:'DONE',task:m};
+      return {kind:'WAITING',task:m};
     }
     return null;
   }
