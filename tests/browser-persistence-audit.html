@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Level-Up Lab Synthetic Persistence Audit</title>
+  <style>
+    body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e5e7eb;margin:0;padding:24px}
+    main{max-width:900px;margin:auto}.card{background:#111827;border:1px solid #334155;border-radius:14px;padding:18px;margin:14px 0}
+    button{background:#38bdf8;color:#082f49;border:0;border-radius:10px;padding:11px 15px;font-weight:700;cursor:pointer}
+    .pass{color:#86efac}.fail{color:#fda4af}.muted{color:#94a3b8}pre{white-space:pre-wrap;background:#020617;padding:14px;border-radius:10px;overflow:auto}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Level-Up Lab Synthetic Persistence Audit</h1>
+  <p class="muted">This page uses a separate synthetic database and localStorage key. It never opens or writes Michael's learner database.</p>
+  <div class="card">
+    <strong>Audit isolation</strong>
+    <p>Database: <code>MLUL_SYNTHETIC_AUDIT_V1</code><br>State key: <code>synthetic_learner</code><br>Probe key: <code>__healthcheck</code></p>
+    <button id="run">Run synthetic persistence audit</button>
+  </div>
+  <div id="results" class="card"><p class="muted">Not run yet.</p></div>
+  <div class="card"><strong>Raw audit result</strong><pre id="raw">—</pre></div>
+</main>
+<script src="browser-persistence-audit.js"></script>
+</body>
+</html>
