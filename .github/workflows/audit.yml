@@ -18,6 +18,8 @@ jobs:
           node --check review-engine.js
           node --check track-a-engine.js
           node --check track-a-diagnostic.js
+          node --check track-a-remediation.js
+          node --check track-a-verification.js
           node --check audit-browser.js
       - name: Run frozen-vocabulary and persistence regression
         run: node tests/audit-regression.test.mjs
@@ -31,3 +33,7 @@ jobs:
         run: node tests/track-a-diagnostic.test.mjs
       - name: Run Track A delivery and evidence adapter regression
         run: node tests/track-a-ui-adapter.test.mjs
+      - name: Run adaptive Track A path module regression
+        run: node tests/track-a-paths-h.test.mjs
+      - name: Run adaptive Track A repair and verification UI regression
+        run: node tests/track-a-adaptive-ui-h.test.mjs
