@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 const app=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8');
 const index=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
 const audit=fs.readFileSync(new URL('../audit-browser.js',import.meta.url),'utf8');
+const integrity=fs.readFileSync(new URL('../state-integrity.js',import.meta.url),'utf8');
 
 assert.match(index,/storage-durability\.js/);
 assert.match(app,/const STORAGE_DURABILITY = window\.LEVEL_UP_STORAGE_DURABILITY/);
@@ -15,8 +16,8 @@ assert.match(app,/STATE_INTEGRITY\.nextRevision\(lastDurableRevision\)/);
 assert.match(app,/STATE_INTEGRITY\.compareRevisions/);
 assert.match(app,/UNKNOWN_PRE_REVISION/);
 assert.match(app,/MIRROR_AHEAD/);
-assert.match(app,/redundancy_degraded_at_write/);
-assert.match(app,/annotateWriteProvenance/);
+assert.match(integrity,/redundancy_degraded_at_write/);
+assert.match(app,/STATE_INTEGRITY\.annotateWriteProvenance\(ev,sameOriginRedundancyDegraded\(\)\)/);
 assert.match(app,/prepareRestoreCandidate/);
 assert.match(app,/observedRevisions/);
 assert.match(app,/requestPersistentStorage/);
