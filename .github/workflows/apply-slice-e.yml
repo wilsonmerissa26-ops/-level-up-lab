@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - scripts/apply-slice-e.py
+      - scripts/trigger-slice-e.txt
 
 permissions:
   contents: write
