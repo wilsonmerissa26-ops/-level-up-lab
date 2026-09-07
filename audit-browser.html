@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Level-Up Browser Persistence Audit</title>
+  <style>
+    body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+    .wrap{max-width:820px;margin:auto}.card{background:#111827;border:1px solid #334155;border-radius:18px;padding:20px;margin:14px 0}
+    button{font:inherit;padding:12px 16px;border-radius:12px;border:0;background:#2563eb;color:white;font-weight:700;margin:4px 6px 4px 0}
+    button.secondary{background:#334155}.pass{color:#86efac}.fail{color:#fca5a5}.warn{color:#fde68a}.muted{color:#94a3b8}
+    code{background:#020617;padding:2px 6px;border-radius:6px}.result{padding:10px 0;border-bottom:1px solid #1e293b}.result:last-child{border-bottom:0}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Level-Up Browser Persistence Audit</h1>
+  <div class="card">
+    <strong>Safe synthetic test only.</strong>
+    <p class="muted">This page uses a separate IndexedDB database and separate localStorage key. It does not read or write Michael's learner database.</p>
+    <p><code>MichaelLevelUpLab_BROWSER_AUDIT</code></p>
+  </div>
+  <div class="card">
+    <h2>Run audit</h2>
+    <button id="runBtn">Run non-reload tests</button>
+    <button id="crashBtn">Run crash/reload test</button>
+    <button id="fallbackBtn">Run invalid-disk fallback reload test</button>
+    <button class="secondary" id="resetBtn">Reset audit storage</button>
+    <p class="warn">The two reload tests intentionally reload this audit page. That is expected.</p>
+  </div>
+  <div class="card">
+    <h2>Results</h2>
+    <div id="summary" class="muted">No tests run yet.</div>
+    <div id="results"></div>
+  </div>
+</div>
+<script src="audit-browser.js"></script>
+</body>
+</html>
