@@ -20,6 +20,8 @@ jobs:
           node --check track-a-diagnostic.js
           node --check track-a-remediation.js
           node --check track-a-verification.js
+          node --check track-a-mastery-state.js
+          node --check track-a-mastery.js
           node --check audit-browser.js
       - name: Run frozen-vocabulary and persistence regression
         run: node tests/audit-regression.test.mjs
@@ -37,3 +39,9 @@ jobs:
         run: node tests/track-a-paths-h.test.mjs
       - name: Run adaptive Track A repair and verification UI regression
         run: node tests/track-a-adaptive-ui-h.test.mjs
+      - name: Run formal Track A mastery generator regression
+        run: node tests/track-a-mastery-i.test.mjs
+      - name: Run formal Track A mastery scheduling regression
+        run: node tests/track-a-mastery-state-i.test.mjs
+      - name: Run formal Track A mastery UI regression
+        run: node tests/track-a-mastery-ui-i.test.mjs
