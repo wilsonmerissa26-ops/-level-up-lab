@@ -17,6 +17,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Normalize legacy verification line for patch anchor
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+          old='state.trackAActiveSession=null;if(!await save("finish Track A verification"))return;const passed='
+          new='state.trackAActiveSession=null;if(!await save("finish Track A verification"))return;\n    const passed='
+          if old in s:
+              s=s.replace(old,new,1)
+              p.write_text(s)
+          PY
       - name: Apply Slice I patch
         run: python3 scripts/apply-slice-i.py
       - name: Syntax checks
