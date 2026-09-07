@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Level-Up Audit" />
   <title>Level-Up Browser Persistence Audit</title>
   <style>
     body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
@@ -17,14 +19,21 @@
   <h1>Level-Up Browser Persistence Audit</h1>
   <div class="card">
     <strong>Safe synthetic test only.</strong>
-    <p class="muted">This page uses a separate IndexedDB database and separate localStorage key. It does not read or write Michael's learner database.</p>
+    <p class="muted">This page uses a separate IndexedDB database and separate localStorage keys. It does not read or write Michael's learner database.</p>
     <p><code>MichaelLevelUpLab_BROWSER_AUDIT</code></p>
+  </div>
+  <div class="card">
+    <h2>Environment</h2>
+    <div id="environment" class="muted">Checking browser storage mode…</div>
+    <button id="checkStorageBtn">Check storage mode</button>
+    <button id="persistBtn">Request persistent storage</button>
+    <p class="warn">Use the persistent-storage request only by tapping this button. The audit never requests persistence during page initialization.</p>
   </div>
   <div class="card">
     <h2>Run audit</h2>
     <button id="runBtn">Run non-reload tests</button>
     <button id="crashBtn">Run crash/reload test</button>
-    <button id="fallbackBtn">Run invalid-disk fallback reload test</button>
+    <button id="fallbackBtn">Run mirror-recovery reload test</button>
     <button class="secondary" id="resetBtn">Reset audit storage</button>
     <p class="warn">The two reload tests intentionally reload this audit page. That is expected.</p>
   </div>
@@ -34,6 +43,7 @@
     <div id="results"></div>
   </div>
 </div>
+<script src="storage-durability.js"></script>
 <script src="audit-browser.js"></script>
 </body>
 </html>
