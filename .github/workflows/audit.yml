@@ -15,6 +15,7 @@ jobs:
       - name: Syntax check engines
         run: |
           node --check app.js
+          node --check storage-durability.js
           node --check state-integrity.js
           node --check review-engine.js
           node --check track-a-engine.js
@@ -48,3 +49,9 @@ jobs:
         run: node tests/track-a-mastery-ui-i.test.mjs
       - name: Run independent-audit release integrity regression
         run: node tests/release-integrity-j.test.mjs
+      - name: Run Patch K storage API durability fakes
+        run: node tests/storage-durability-k.test.mjs
+      - name: Run Patch K revision and migration regression
+        run: node tests/revision-integrity-k.test.mjs
+      - name: Run Patch K app and browser integration regression
+        run: node tests/patch-k-ui-integration.test.mjs
