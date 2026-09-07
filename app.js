@@ -1,5 +1,6 @@
 (() => {
   const CONTENT = window.LEVEL_UP_CONTENT;
+  const REVIEW_ENGINE = window.LEVEL_UP_REVIEW_ENGINE;
   const DB_NAME = "MichaelLevelUpLab";
   const DB_VERSION = 1;
   const STORE = "state";
@@ -184,6 +185,8 @@
       draft.confidence=confidence?.value??null;
       draft.access_condition=validAccessCondition(access?.value);
       draft.access_condition_source=accessSourceFor(access,draft.access_condition);
+      const assistance=document.getElementById("itemAssistanceLevel");
+      draft.assistance_level=ASSISTANCE_LEVELS.includes(assistance?.value)?assistance.value:null;
     }
     session.draft=draft;
     state.activeSession=session;
@@ -203,12 +206,13 @@
       if(d.choiceValue!=null){const radio=document.querySelector(`input[name=answer][value="${d.choiceValue}"]`);if(radio)radio.checked=true}
       if(d.confidence){const confidence=document.querySelector(`input[name=confidence][value="${d.confidence}"]`);if(confidence)confidence.checked=true}
       const access=document.getElementById("itemAccessCondition");if(access){access.value=d.access_condition??"";access.dataset.accessConditionSource=d.access_condition_source||"UNRECORDED"}
+      const assistance=document.getElementById("itemAssistanceLevel");if(assistance&&d.assistance_level)assistance.value=d.assistance_level;
     }
   }
 
   function bindDraftAutosave(){
     if(!current)return;
-    const selectors=["#sayBack","#teachAccess","#freeAnswer","#itemAccessCondition","input[name=answer]","input[name=confidence]"];
+    const selectors=["#sayBack","#teachAccess","#freeAnswer","#itemAccessCondition","#itemAssistanceLevel","input[name=answer]","input[name=confidence]"];
     document.querySelectorAll(selectors.join(",")).forEach(el=>{
       const isTyping=el.tagName==="INPUT" && el.type==="text" || el.tagName==="TEXTAREA";
       const event=isTyping?"input":"change";
@@ -258,8 +262,12 @@
     state.activeSession=session;
     upsertSessionRecord(session);
     if(!await save("resume session"))return;
-    current={lesson,session};
-    if(session.phase==="TEACH")renderLessonTeach();else renderQuestion();
+    if(session.mode==="REVIEW" || session.reviewId){
+      const review=reviewById(session.reviewId);if(!review||!REVIEW_ENGINE){alert("The preserved review cannot be reconstructed safely.");current=null;return}
+      const reviewItems=REVIEW_ENGINE.generateReview(session.lessonId,review.window,review.id);current={lesson,session,review,reviewItems};renderReviewQuestion();
+    }else{
+      current={lesson,session};if(session.phase==="TEACH")renderLessonTeach();else renderQuestion();
+    }
   }
 
   async function endPreservedSession(){
@@ -288,6 +296,16 @@
 
   function escapeHTML(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
   function normalize(s){return String(s).trim().toLowerCase().replace(/[^a-z0-9.+-]/g,"")}
+  function numericFromResponse(value){const m=String(value??"").replace(/,/g,"").match(/[-+]?\d*\.?\d+/);return m?Number(m[0]):null}
+  function answersMatch(raw,expected){
+    const expectedNum=numericFromResponse(expected);
+    if(expectedNum!==null && /^[-+]?\d*\.?\d+$/.test(String(expected).trim())){
+      const rawNum=numericFromResponse(raw);return rawNum!==null && Math.abs(rawNum-expectedNum)<1e-9;
+    }
+    return normalize(raw)===normalize(expected);
+  }
+  function pushEvidenceOnce(ev){const found=state.evidence.find(x=>x.id===ev.id);if(found)return found;state.evidence.push(ev);return ev}
+  function pushSessionResponseOnce(session,ev){const found=session.responses.find(x=>x.id===ev.id);if(found)return found;session.responses.push(ev);return ev}
   function now(){return new Date().toISOString()}
   function fmt(iso){return new Date(iso).toLocaleString()}
   function allLessons(){return [...CONTENT.science,...CONTENT.math]}
@@ -357,7 +375,7 @@
     if(!isReady(lesson)){alert("Finish the prerequisite first.");return}
     const ok=await persistenceHealthCheck();renderSaveStatus();
     if(!ok){alert("The app cannot verify persistence, so the lesson will not start.");return}
-    const session={id:`sess_${Date.now()}`,track:"B",subject,lessonId:id,startedAt:now(),phase:"TEACH",instructionDelivered:false,itemIndex:0,responses:[],access_policy:{allowed_access_conditions:[...ACCESS_CONDITIONS],extra_processing_available:true,parent_verbatim_available:true},teach_access_condition:null,teach_access_condition_source:"UNRECORDED",status:"ACTIVE"};
+    const session={id:`sess_${Date.now()}`,mode:"LESSON",track:"B",subject,lessonId:id,startedAt:now(),phase:"TEACH",instructionDelivered:false,itemIndex:0,responses:[],access_policy:{allowed_access_conditions:[...ACCESS_CONDITIONS],extra_processing_available:true,parent_verbatim_available:true},teach_access_condition:null,teach_access_condition_source:"UNRECORDED",status:"ACTIVE"};
     state.activeSession=session;upsertSessionRecord(session);
     if(!await save("start lesson"))return;
     current={lesson,session};renderLessonTeach();
@@ -391,7 +409,7 @@
     current.session.teach_access_condition=teachAccess;
     current.session.teach_access_condition_source=teachAccessSource;
     if(sayBack){
-      state.evidence.push({id:`ev_${Date.now()}`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",subject:current.session.subject,skillId:current.lesson.id,evidenceType:"THINK_ALOUD",rawResponse:sayBack,interpretation:null,assistance_level:assistanceLevelForSession(current.session),access_condition:teachAccess,access_condition_source:teachAccessSource,access_observation:{access_condition:teachAccess,access_condition_source:teachAccessSource,parent_verbatim_used:true,extra_processing_available:true}});
+      pushEvidenceOnce({id:`ev_${current.session.id}_think`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",subject:current.session.subject,skillId:current.lesson.id,evidenceType:"THINK_ALOUD",rawResponse:sayBack,interpretation:null,assistance_level:assistanceLevelForSession(current.session),access_condition:teachAccess,access_condition_source:teachAccessSource,access_observation:{access_condition:teachAccess,access_condition_source:teachAccessSource,parent_verbatim_used:true,extra_processing_available:true}});
     }
     current.session.instructionDelivered=true;
     current.session.phase="CHECK_AFTER_TEACH";current.session.itemIndex=0;current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);
@@ -420,14 +438,14 @@
   async function submitAnswer(){
     const q=current.lesson.checks[current.session.itemIndex];let raw="",correct=false;
     if(q.choices){const chosen=document.querySelector("input[name=answer]:checked");if(!chosen){alert("Choose Michael's answer first.");return}const idx=Number(chosen.value);raw=q.choices[idx];correct=idx===q.answer}
-    else{const el=document.getElementById("freeAnswer");raw=el.value.trim();if(!raw){alert("Type Michael's answer exactly. 'I don't know' is a valid answer.");return}correct=normalize(raw)===normalize(q.free)}
+    else{const el=document.getElementById("freeAnswer");raw=el.value.trim();if(!raw){alert("Type Michael's answer exactly. 'I don't know' is a valid answer.");return}correct=answersMatch(raw,q.free)}
     const confidence=document.querySelector("input[name=confidence]:checked")?.value||"not_recorded";
     const accessSelector=document.getElementById("itemAccessCondition");
     const accessCondition=validAccessCondition(accessSelector?.value);
     const accessConditionSource=accessSourceFor(accessSelector,accessCondition);
     const assistanceLevel=assistanceLevelForSession(current.session);
-    const ev={id:`ev_${Date.now()}_${current.session.itemIndex}`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",subject:current.session.subject,skillId:current.lesson.id,itemId:q.id,prompt:q.q,rawResponse:raw,isCorrect:correct,confidence,assistance_level:assistanceLevel,access_condition:accessCondition,access_condition_source:accessConditionSource,access_observation:{access_condition:accessCondition,access_condition_source:accessConditionSource,extra_processing_available:true,parent_verbatim_available:true},interpretation:correct?"immediate taught-response correct":"immediate taught-response needs more support"};
-    state.evidence.push(ev);current.session.responses.push(ev);current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);
+    const ev={id:`ev_${current.session.id}_${current.session.itemIndex}`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",subject:current.session.subject,skillId:current.lesson.id,itemId:q.id,prompt:q.q,rawResponse:raw,isCorrect:correct,confidence,assistance_level:assistanceLevel,access_condition:accessCondition,access_condition_source:accessConditionSource,access_observation:{access_condition:accessCondition,access_condition_source:accessConditionSource,extra_processing_available:true,parent_verbatim_available:true},interpretation:correct?"immediate taught-response correct":"immediate taught-response needs more support"};
+    pushEvidenceOnce(ev);pushSessionResponseOnce(current.session,ev);current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);
     if(!await save("answer"))return;
     document.querySelectorAll("input").forEach(x=>x.disabled=true);
     const fb=document.getElementById("feedback");fb.className="feedback "+(correct?"good":"warn");fb.innerHTML=`<strong>${correct?"Yes — that's it.":"Not yet."}</strong><div class="small" style="margin-top:6px">${escapeHTML(q.why)}</div><div class="small muted" style="margin-top:6px">Because this is Track B, teaching feedback is allowed after Michael answers.</div><button class="btn ${correct?"good":"warn"}" style="margin-top:10px" onclick="window.MLUL.nextQuestion()">${current.session.itemIndex===current.lesson.checks.length-1?"Finish lesson":"Next"}</button>`;
@@ -451,8 +469,80 @@
   }
 
   function scheduleReviews(skillId,subject){
-    const existing=state.reviewSchedule.filter(x=>x.skillId===skillId&&!x.completed);if(existing.length)return;
+    const existing=state.reviewSchedule.filter(x=>x.skillId===skillId);if(existing.length)return;
     [2,7,21].forEach(days=>{const d=new Date();d.setDate(d.getDate()+days);state.reviewSchedule.push({id:`rev_${Date.now()}_${days}`,skillId,subject,dueAt:d.toISOString(),window:`Day ${days}`,completed:false,sourceTrack:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION"})});
+  }
+
+
+  function reviewById(id){return state.reviewSchedule.find(x=>x.id===id)||null}
+  function reviewIsDue(review){return !!(review && !review.completed && new Date(review.dueAt)<=new Date())}
+  function reviewOutcomeFromScore(score){if(score===100)return"RETRIEVAL_STRONG";if(score>=67)return"RETRIEVAL_PARTIAL";return"RETRIEVAL_WEAK"}
+  function memoryStrengthForReview(windowLabel,score,transferCorrect){
+    if(score<67)return"FRAGILE";
+    if(score<100)return"BUILDING";
+    if(windowLabel==="Day 2")return"BUILDING";
+    if(windowLabel==="Day 7")return"STABLE";
+    if(windowLabel==="Day 21")return transferCorrect?"FLEXIBLE":"STABLE";
+    return"BUILDING";
+  }
+  function assistanceOptions(selected="INDEPENDENT"){
+    const labels={INDEPENDENT:"Independent",CLARIFIED:"Directions clarified",HINTED:"Hinted",GUIDED:"Guided",TAUGHT:"Taught during item",PARENT_ASSISTED:"Parent assisted"};
+    return ASSISTANCE_LEVELS.map(v=>`<option value="${v}" ${v===selected?"selected":""}>${labels[v]}</option>`).join("");
+  }
+
+  async function startReview(reviewId){
+    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take reviews yet.");return}
+    if(recoverableSession()){alert("A session is already preserved. Resume it or end it before starting another review.");return}
+    const review=reviewById(reviewId);if(!review){alert("Review not found.");return}
+    if(!reviewIsDue(review)){alert("This review is not due yet or is already completed.");return}
+    if(!REVIEW_ENGINE){alert("The fresh review engine is not available.");return}
+    const lesson=lessonById(review.skillId);if(!lesson)return;
+    const ok=await persistenceHealthCheck();renderSaveStatus();if(!ok){alert("The app cannot verify persistence, so the review will not start.");return}
+    const reviewItems=REVIEW_ENGINE.generateReview(review.skillId,review.window,review.id);
+    const session={id:`review_sess_${Date.now()}`,mode:"REVIEW",track:"B",subject:review.subject,lessonId:review.skillId,reviewId:review.id,reviewWindow:review.window,startedAt:now(),phase:"RETRIEVAL",instructionDelivered:false,itemIndex:0,responses:[],access_policy:{allowed_access_conditions:[...ACCESS_CONDITIONS],extra_processing_available:true,parent_verbatim_available:true},status:"ACTIVE",draft:null};
+    state.activeSession=session;upsertSessionRecord(session);if(!await save("start review"))return;
+    current={lesson,session,review,reviewItems};renderReviewQuestion();
+  }
+
+  function renderReviewQuestion(){
+    const q=current.reviewItems[current.session.itemIndex];
+    const input=q.choices?q.choices.map((x,i)=>`<label class="choice"><input type="radio" name="answer" value="${i}"><span>${escapeHTML(x)}</span></label>`).join(""):`<input type="text" id="freeAnswer" placeholder="Type Michael's answer exactly. 'I don't know' is allowed.">`;
+    document.getElementById("app").innerHTML=shell(`<div class="card"><div class="row between"><div><span class="pill info">${current.review.window}</span><h2 style="margin-top:10px">Delayed retrieval ${current.session.itemIndex+1} of ${current.reviewItems.length}</h2><p class="muted">Fresh questions · no teaching feedback until the review is finished</p></div><span class="badge">${current.lesson.schoolTag}</span></div>
+      <div class="row"><button class="btn" onclick="window.MLUL.readReviewQuestion()">🔊 Read to me</button><button class="btn" onclick="speechSynthesis.cancel()">■ Stop</button></div>
+      <div class="question">${escapeHTML(q.q)}</div><div class="choices">${input}</div>
+      <label class="small">How was this question accessed?</label><select id="itemAccessCondition" onchange="window.MLUL.markAccessObserved(this)">${accessOptions(null)}</select>
+      <div class="spacer"></div><label class="small">Assistance on this item</label><select id="itemAssistanceLevel">${assistanceOptions(current.session.draft?.assistance_level||"INDEPENDENT")}</select>
+      <div class="spacer"></div><div class="row"><label class="small"><input type="radio" name="confidence" value="sure"> Sure</label><label class="small"><input type="radio" name="confidence" value="kinda"> Kinda sure</label><label class="small"><input type="radio" name="confidence" value="guess"> Guessing</label></div>
+      <div class="spacer"></div><div class="row"><button class="btn primary" onclick="window.MLUL.submitReviewAnswer()">Submit answer</button><button class="btn" onclick="window.MLUL.manualSave()">Save</button><button class="btn" onclick="window.MLUL.saveAndExit()">Save & Exit</button></div>
+    </div>`);renderSaveStatus();restoreDraftToUI();const assist=document.getElementById("itemAssistanceLevel");if(assist&&current.session.draft?.assistance_level)assist.value=current.session.draft.assistance_level;bindDraftAutosave();
+  }
+
+  function readReviewQuestion(){
+    const q=current.reviewItems[current.session.itemIndex];const selector=document.getElementById("itemAccessCondition");if(selector){selector.value="SYSTEM_READ_ALOUD";markAccessObserved(selector)}
+    speak(q.q+(q.choices?" Choices. "+q.choices.join(". "):""));clearTimeout(draftSaveTimer);captureDraftFromUI();void save("review read-aloud access");
+  }
+
+  async function submitReviewAnswer(){
+    const q=current.reviewItems[current.session.itemIndex];let raw="",correct=false;
+    if(q.choices){const chosen=document.querySelector("input[name=answer]:checked");if(!chosen){alert("Choose Michael's answer first.");return}const idx=Number(chosen.value);raw=q.choices[idx];correct=idx===q.answer}
+    else{const el=document.getElementById("freeAnswer");raw=el.value.trim();if(!raw){alert("Type Michael's answer exactly. 'I don't know' is a valid answer.");return}correct=answersMatch(raw,q.free)}
+    const confidence=document.querySelector("input[name=confidence]:checked")?.value||"not_recorded";
+    const accessSelector=document.getElementById("itemAccessCondition");const accessCondition=validAccessCondition(accessSelector?.value);const accessConditionSource=accessSourceFor(accessSelector,accessCondition);
+    const assistanceSelector=document.getElementById("itemAssistanceLevel");const assistance=ASSISTANCE_LEVELS.includes(assistanceSelector?.value)?assistanceSelector.value:"INDEPENDENT";
+    const ev={id:`review_ev_${current.session.id}_${current.session.itemIndex}`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",evidenceType:"DELAYED_RETRIEVAL",subject:current.session.subject,skillId:current.review.skillId,itemId:q.id,prompt:q.q,rawResponse:raw,isCorrect:correct,confidence,review_window:current.review.window,transfer:!!q.transfer,assistance_level:assistance,access_condition:accessCondition,access_condition_source:accessConditionSource,access_observation:{access_condition:accessCondition,access_condition_source:accessConditionSource,extra_processing_available:true,parent_verbatim_available:true},interpretation:correct?"delayed retrieval correct":"delayed retrieval miss"};
+    pushEvidenceOnce(ev);pushSessionResponseOnce(current.session,ev);current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);if(!await save("review answer"))return;
+    current.session.itemIndex++;
+    if(current.session.itemIndex<current.reviewItems.length){state.activeSession=current.session;upsertSessionRecord(current.session);if(!await save("review next question"))return;renderReviewQuestion();return}
+    await finishReview();
+  }
+
+  async function finishReview(){
+    const responses=current.session.responses;const correct=responses.filter(x=>x.isCorrect).length;const total=responses.length;const score=Math.round(correct/total*100);const transferResponses=responses.filter(x=>x.transfer);const transferCorrect=transferResponses.length>0&&transferResponses.every(x=>x.isCorrect);
+    const review=reviewById(current.review.id);review.completed=true;review.completedAt=now();review.score=score;review.outcome=reviewOutcomeFromScore(score);review.transferCorrect=transferCorrect;
+    const lessonState=state.lessonState[current.review.skillId]||{};lessonState.memoryStrength=memoryStrengthForReview(review.window,score,transferCorrect);lessonState.lastReviewAt=review.completedAt;lessonState.lastReviewWindow=review.window;lessonState.trackBReviewOutcome=review.outcome;state.lessonState[current.review.skillId]=lessonState;
+    current.session.status="COMPLETED";current.session.completedAt=now();current.session.draft=null;upsertSessionRecord(current.session);state.activeSession=null;if(!await save("finish review"))return;
+    const corrections=current.reviewItems.map((q,i)=>{const r=responses[i];const expected=q.choices?q.choices[q.answer]:q.free;return `<div class="teacher"><strong>${r?.isCorrect?"✓":"Review"} ${escapeHTML(q.q)}</strong><p class="small">Michael: ${escapeHTML(r?.rawResponse||"")}</p><p class="small muted">Answer: ${escapeHTML(expected)}${q.why?` · ${escapeHTML(q.why)}`:""}</p></div>`}).join("");
+    document.getElementById("app").innerHTML=shell(`<div class="card"><span class="pill good">${review.window} retrieval complete</span><h2 style="margin-top:12px">${current.lesson.title}</h2><div class="big">${correct}/${total}</div><p class="muted">${review.outcome} · Memory: ${lessonState.memoryStrength}</p><div class="callout"><strong>Still not a mastery declaration.</strong> Delayed retrieval updates memory evidence only. Track A owns canonical mastery transitions.</div><div class="spacer"></div>${corrections}<div class="row"><button class="btn primary" onclick="location.hash='reviews'">Back to Review Queue</button></div></div>`);renderSaveStatus();current=null;
   }
 
   function parentView(){
@@ -471,8 +561,12 @@
   }
 
   function reviewsView(){
-    const rows=state.reviewSchedule.slice().sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).map(r=>{const l=lessonById(r.skillId);const due=new Date(r.dueAt);const nowd=new Date();const status=r.completed?"Completed":due<=nowd?"Due now":"Scheduled";return `<tr><td>${escapeHTML(l?.title||r.skillId)}</td><td>${r.window}</td><td>${due.toLocaleDateString()}</td><td>${status}</td><td>${r.evidence_class} / ${r.instruction_exposure_status}</td></tr>`}).join("")||`<tr><td colspan="5" class="muted">Complete a Track B lesson to create delayed reviews.</td></tr>`;
-    return shell(`<div class="card"><h2>Delayed Retrieval Queue</h2><p class="muted">Immediate success is not mastery. Track B schedules Day 2, Day 7, and Day 21 retrieval checkpoints by default.</p><div class="tablewrap"><table><thead><tr><th>Skill</th><th>Window</th><th>Due</th><th>Status</th><th>Evidence label</th></tr></thead><tbody>${rows}</tbody></table></div><div class="callout warn small"><strong>v1 foundation:</strong> review scheduling is active. Fresh review item generation is the next implementation slice; it will never reuse the exact teaching questions as the only mastery evidence.</div></div>`)
+    const rows=state.reviewSchedule.slice().sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).map(r=>{
+      const l=lessonById(r.skillId);const due=new Date(r.dueAt);const dueNow=due<=new Date();const status=r.completed?`Completed · ${r.score}%`:dueNow?"Due now":"Scheduled";
+      const action=r.completed?"—":dueNow?`<button class="btn ${RUNTIME_ENABLED?"primary":""}" ${RUNTIME_ENABLED?"":"disabled"} onclick="window.MLUL.startReview('${r.id}')">${RUNTIME_ENABLED?"Start fresh review":"Audit hold"}</button>`:"Not due yet";
+      return `<tr><td>${escapeHTML(l?.title||r.skillId)}</td><td>${r.window}</td><td>${due.toLocaleDateString()}</td><td>${status}</td><td>${r.evidence_class} / ${r.instruction_exposure_status}</td><td>${action}</td></tr>`
+    }).join("")||`<tr><td colspan="6" class="muted">Complete a Track B lesson to create delayed reviews.</td></tr>`;
+    return shell(`<div class="card"><h2>Delayed Retrieval Queue</h2><p class="muted">Immediate success is not mastery. Track B schedules Day 2, Day 7, and Day 21 retrieval checkpoints and generates fresh deterministic items for each window.</p><div class="tablewrap"><table><thead><tr><th>Skill</th><th>Window</th><th>Due</th><th>Status</th><th>Evidence label</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div><div class="callout small"><strong>Freshness rule:</strong> delayed reviews do not reuse the exact teaching prompts. Day 21 includes transfer evidence. Canonical mastery still belongs to Track A.</div></div>`)
   }
 
   function trackA(){
@@ -546,6 +640,6 @@
     render();
   }
 
-  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord}};
+  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore}};
   init();
 })();

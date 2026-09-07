@@ -31,7 +31,8 @@
     return a;
   }
   function choice(prompt,correct,distractors,r,extra={}){
-    const choices=shuffle([correct,...distractors],r);
+    const pool=[correct,...distractors].filter((v,i,a)=>a.indexOf(v)===i);
+    const choices=shuffle(pool,r);
     return {q:prompt,choices,answer:choices.indexOf(correct),why:extra.why||"",transfer:!!extra.transfer};
   }
   function free(prompt,answer,why,extra={}){return {q:prompt,free:String(answer),why,transfer:!!extra.transfer}}
