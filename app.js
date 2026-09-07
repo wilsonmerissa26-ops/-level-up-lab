@@ -7,6 +7,7 @@
   const TRACK_A_VERIFICATION = window.LEVEL_UP_TRACK_A_VERIFICATION;
   const TRACK_A_MASTERY_STATE = window.LEVEL_UP_TRACK_A_MASTERY_STATE;
   const TRACK_A_MASTERY = window.LEVEL_UP_TRACK_A_MASTERY;
+  const STATE_INTEGRITY = window.LEVEL_UP_STATE_INTEGRITY;
   const DB_NAME = "MichaelLevelUpLab";
   const DB_VERSION = 1;
   const STORE = "state";
@@ -22,6 +23,8 @@
   let current = null;
   let currentTrackA = null;
   let saveHealthy = false;
+  let backupMirrorHealthy = true;
+  let lastDurableState = null;
   let writeSequence = Promise.resolve();
   let draftSaveTimer = null;
 
@@ -83,7 +86,7 @@
   }
 
   function isValidLearnerState(value){
-    return !!(value && value.student && value.student.id === "michael" && Array.isArray(value.evidence) && value.lessonState && typeof value.lessonState === "object");
+    return !!(STATE_INTEGRITY && value && value.schemaVersion===STATE_INTEGRITY.SUPPORTED_SCHEMA_VERSION && STATE_INTEGRITY.coreLearnerStateValid(value) && !STATE_INTEGRITY.containsLegacyFields(value));
   }
 
   function readLocalBackup(){
@@ -95,22 +98,33 @@
     }catch(_){return null}
   }
 
+  function rebindLiveStateReferences(){
+    if(current?.session && state?.activeSession && current.session.id===state.activeSession.id) current.session=state.activeSession;
+    if(currentTrackA?.session && state?.trackAActiveSession && currentTrackA.session.id===state.trackAActiveSession.id) currentTrackA.session=state.trackAActiveSession;
+  }
+
   async function save(reason="update"){
     state.updatedAt=new Date().toISOString();
     const snapshot=JSON.parse(JSON.stringify(state));
     const task=writeSequence.catch(()=>{}).then(async()=>{
+      // IndexedDB is the primary learner record. The localStorage copy is a secondary mirror.
       await idbPut(snapshot,STATE_KEY);
-      localStorage.setItem(BACKUP_KEY,JSON.stringify(snapshot));
-      return true;
+      let backupOk=true;
+      try{localStorage.setItem(BACKUP_KEY,JSON.stringify(snapshot))}catch(err){backupOk=false;console.warn("Local backup mirror failed",err)}
+      return {backupOk};
     });
     writeSequence=task;
     try{
-      await task;
+      const result=await task;
+      lastDurableState=JSON.parse(JSON.stringify(snapshot));
+      backupMirrorHealthy=result.backupOk;
       saveHealthy=true;renderSaveStatus();
       return true;
     }catch(err){
+      // Roll memory back to the last state that actually reached primary storage.
+      if(lastDurableState){state=JSON.parse(JSON.stringify(lastDurableState));rebindLiveStateReferences()}
       saveHealthy=false;renderSaveStatus();
-      alert("Saving failed. The session is paused so Michael's evidence is not lost. Export a backup before continuing.");
+      alert("Saving failed. This change was rolled back to the last durable learner state. Do not continue until persistence is working.");
       console.error(reason,err);
       return false;
     }
@@ -142,7 +156,7 @@
     return value;
   }
 
-  function validAccessCondition(value){return ACCESS_CONDITIONS.includes(value)?value:null}
+  function validAccessCondition(value){return STATE_INTEGRITY?STATE_INTEGRITY.validAccessCondition(value):(ACCESS_CONDITIONS.includes(value)?value:null)}
 
   function assistanceLevelForSession(session){
     if(!session)return "INDEPENDENT";
@@ -317,7 +331,13 @@
     }
     return normalize(raw)===normalize(expected);
   }
-  function pushEvidenceOnce(ev){const found=state.evidence.find(x=>x.id===ev.id);if(found)return found;state.evidence.push(ev);return ev}
+  function evidenceSessionContext(){return currentTrackA?.session||current?.session||state?.trackAActiveSession||state?.activeSession||null}
+  function pushEvidenceOnce(ev,sessionOverride=null){
+    const found=state.evidence.find(x=>x.id===ev.id);if(found)return found;
+    const session=sessionOverride||evidenceSessionContext();
+    if(session&&STATE_INTEGRITY)STATE_INTEGRITY.linkEvidenceToSession(ev,session,state.evidence);
+    state.evidence.push(ev);return ev
+  }
   function pushSessionResponseOnce(session,ev){const found=session.responses.find(x=>x.id===ev.id);if(found)return found;session.responses.push(ev);return ev}
   function now(){return new Date().toISOString()}
   function fmt(iso){return new Date(iso).toLocaleString()}
@@ -572,8 +592,8 @@
   function skillRow(l){const s=lessonStatus(l.id);return `<tr><td>${escapeHTML(l.title)}<div class="tiny muted">${escapeHTML(l.id)}</div></td><td>${s.trackBProgress||"NOT_STARTED"}</td><td>${s.score==null?"—":s.score+"%"}</td><td>${s.memoryStrength||"—"}</td><td>${s.instruction_exposure_status||"Not taught in Track B yet"}</td></tr>`}
 
   function evidenceView(){
-    const rows=state.evidence.slice().reverse().map(e=>`<tr><td>${fmt(e.createdAt)}</td><td>${escapeHTML(e.track||"")}</td><td>${escapeHTML(e.subject||"")}</td><td>${escapeHTML(e.skillId)}</td><td>${escapeHTML(e.rawResponse)}</td><td>${e.isCorrect===true?"✓":e.isCorrect===false?"Needs work":"—"}</td><td>${escapeHTML(e.evidence_class||"")}</td><td>${escapeHTML(e.interaction_purpose||e.evidenceType||"—")}</td><td>${escapeHTML(e.instruction_exposure_status||"—")}</td><td>${escapeHTML(e.assistance_level||"")}</td><td>${escapeHTML(e.access_condition??"—")}</td><td>${escapeHTML(e.access_condition_source||"UNRECORDED")}</td><td>${e.fresh===true?"fresh":e.fresh===false?"not fresh":"—"} / ${e.reliable===true?"reliable":e.reliable===false?"unreliable":"—"}</td></tr>`).join("")||`<tr><td colspan="13" class="muted">No evidence recorded yet.</td></tr>`;
-    return shell(`<div class="card"><div class="row between"><div><h2>Evidence Log</h2><p class="muted small">Raw evidence is preserved. Interpretation never overwrites Michael's original response. Formal controlled evidence keeps freshness, reliability, assistance, access, and prior-instruction status separately queryable.</p></div><button class="btn" onclick="window.MLUL.exportBackup()">Export backup</button></div><div class="tablewrap"><table><thead><tr><th>Time</th><th>Track</th><th>Subject</th><th>Skill</th><th>Raw response</th><th>Result</th><th>Evidence class</th><th>Purpose</th><th>Exposure</th><th>Assistance</th><th>Access condition</th><th>Access source</th><th>Quality</th></tr></thead><tbody>${rows}</tbody></table></div></div>`)
+    const rows=state.evidence.slice().reverse().map(e=>`<tr><td>${fmt(e.createdAt)}</td><td>${escapeHTML(e.track||"")}</td><td>${escapeHTML(e.attemptNumber??"—")}</td><td>${escapeHTML(e.sessionId||"—")}</td><td>${escapeHTML(e.subject||"")}</td><td>${escapeHTML(e.skillId)}</td><td>${escapeHTML(e.rawResponse)}</td><td>${e.isCorrect===true?"✓":e.isCorrect===false?"Needs work":"—"}</td><td>${escapeHTML(e.evidence_class||"")}</td><td>${escapeHTML(e.interaction_purpose||e.evidenceType||"—")}</td><td>${escapeHTML(e.instruction_exposure_status||"—")}</td><td>${escapeHTML(e.assistance_level||"")}</td><td>${escapeHTML(e.access_condition??"—")}</td><td>${escapeHTML(e.access_condition_source||"UNRECORDED")}</td><td>${e.fresh===true?"fresh":e.fresh===false?"not fresh":"—"} / ${e.reliable===true?"reliable":e.reliable===false?"unreliable":"—"}</td></tr>`).join("")||`<tr><td colspan="15" class="muted">No evidence recorded yet.</td></tr>`;
+    return shell(`<div class="card"><div class="row between"><div><h2>Evidence Log</h2><p class="muted small">Raw evidence is preserved. Interpretation never overwrites Michael's original response. Formal controlled evidence keeps freshness, reliability, assistance, access, and prior-instruction status separately queryable.</p></div><button class="btn" onclick="window.MLUL.exportBackup()">Export backup</button></div><div class="tablewrap"><table><thead><tr><th>Time</th><th>Track</th><th>Attempt</th><th>Session</th><th>Subject</th><th>Skill</th><th>Raw response</th><th>Result</th><th>Evidence class</th><th>Purpose</th><th>Exposure</th><th>Assistance</th><th>Access condition</th><th>Access source</th><th>Quality</th></tr></thead><tbody>${rows}</tbody></table></div></div>`)
   }
 
   function reviewsView(){
@@ -914,7 +934,20 @@
 
   function importBackup(){
     const file=document.getElementById("importFile").files[0];if(!file){alert("Choose a backup file first.");return}
-    const r=new FileReader();r.onload=async()=>{try{const x=JSON.parse(r.result);if(!x.student||x.student.id!=="michael")throw new Error("This is not Michael's Level-Up backup.");state=x;await save("restore");alert("Backup restored.");render()}catch(e){alert("Could not restore backup: "+e.message)}};r.readAsText(file)
+    const r=new FileReader();r.onload=async()=>{
+      try{
+        const parsed=JSON.parse(r.result);
+        if(!STATE_INTEGRITY)throw new Error("Restore validation module is unavailable.");
+        // Validate and clone before touching live learner state.
+        const candidate=normalizeStateShape(STATE_INTEGRITY.validateRestoreCandidate(parsed));
+        if(!isValidLearnerState(candidate))throw new Error("Backup failed post-normalization validation.");
+        const ok=await persistenceHealthCheck();renderSaveStatus();if(!ok)throw new Error("Persistence health check failed; restore was not attempted.");
+        const previous=JSON.parse(JSON.stringify(state));
+        state=candidate;
+        if(!await save("restore")){state=previous;rebindLiveStateReferences();throw new Error("Restore could not be durably saved; previous learner state was kept in memory.")}
+        alert("Backup restored.");render();
+      }catch(e){alert("Could not restore backup: "+e.message)}
+    };r.readAsText(file)
   }
 
   async function checkPersistenceUI(){const ok=await persistenceHealthCheck();renderSaveStatus();const el=document.getElementById("healthText");if(el)el.innerHTML=ok?"<span style='color:#9af0b8'>PASS: response persistence is working.</span>":"<span style='color:#ff9baa'>FAIL: do not run a lesson until storage is working.</span>"}
@@ -955,6 +988,7 @@
       state=normalizeStateShape(isValidLearnerState(backupState)?backupState:freshState());
       saveHealthy=false;
     }
+    lastDurableState=JSON.parse(JSON.stringify(state));
     window.addEventListener("hashchange",async()=>{speechSynthesis?.cancel?.();if(current){clearTimeout(draftSaveTimer);captureDraftFromUI();if(!await save("navigation draft"))return}if(currentTrackA){currentTrackA.session.status="PAUSED";currentTrackA.session.pausedAt=now();state.trackAActiveSession=currentTrackA.session;if(!await save("Track A navigation pause"))return}current=null;currentTrackA=null;render()});
     if(state.activeSession && state.activeSession.status==="ACTIVE"){
       // Crash/reload recovery: preserve the session in place and require an explicit resume or end choice.

@@ -29,7 +29,7 @@ assert.match(source, /assistance_level:assistanceLevel/); pass('answer assistanc
 assert.match(source, /assistance_level:assistanceLevelForSession\(current\.session\)/); pass('think-aloud assistance level derived from session');
 assert.match(source, /access_condition:accessCondition/); pass('answer access condition uses frozen enum');
 assert.match(source, /access_condition:teachAccess/); pass('teach evidence access condition uses frozen enum');
-assert.match(source, /function validAccessCondition\(value\)\{return ACCESS_CONDITIONS\.includes\(value\)\?value:null\}/); pass('unrecognized or unobserved access condition resolves to null');
+assert.match(source, /function validAccessCondition\(value\).*STATE_INTEGRITY.*validAccessCondition/); pass('access validation delegates to tested state-integrity helper');
 assert.match(source, /access_condition_source:accessConditionSource/); pass('answer access provenance stored');
 assert.match(source, /access_condition_source:teachAccessSource/); pass('teach access provenance stored');
 assert.doesNotMatch(source, /accessSupports:/); pass('legacy accessSupports removed');
