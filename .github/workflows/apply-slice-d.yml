@@ -1,0 +1,37 @@
+name: Apply Track B Persistence Slice D
+
+on:
+  push:
+    paths:
+      - scripts/apply-slice-d.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply Slice D patch
+        run: python3 scripts/apply-slice-d.py
+      - name: Syntax check
+        run: node --check app.js
+      - name: Existing audit regression
+        run: node tests/audit-regression.test.mjs
+      - name: Slice D regression
+        run: node tests/persistence-slice-d.test.mjs
+      - name: Commit generated patch
+        run: |
+          git config user.name "level-up-build-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.js README.md docs/NEXT_SLICES.md
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+          else
+            git commit -m "Implement Track B persistence and resume slice D"
+            git push
+          fi
