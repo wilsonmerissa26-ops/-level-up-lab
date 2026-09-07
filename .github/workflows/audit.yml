@@ -12,5 +12,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run audit regression tests
+      - name: Syntax check app
+        run: node --check app.js
+      - name: Run frozen-vocabulary and persistence regression
         run: node tests/audit-regression.test.mjs
+      - name: Run Track B persistence slice D regression
+        run: node tests/persistence-slice-d.test.mjs
