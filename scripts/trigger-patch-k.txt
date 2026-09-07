@@ -1,1 +1,1 @@
-Run Patch K integration after updating Slice D immutable-candidate regression. Retry 4.
+Run Patch K integration after fixing degraded-write provenance integration assertion. Retry 5.
