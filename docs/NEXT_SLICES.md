@@ -1,7 +1,7 @@
 # Next implementation slices
 
-1. Finalize and independently audit Michael Track B local persistence with synthetic data: per-answer autosave, manual Save, Save & Exit, crash/reload recovery, backup/restore, and fail-stop on write error.
-2. Enable Michael only after the synthetic persistence audit passes.
+1. **Implemented in Patch D:** Track B local persistence/usability: per-answer persistence, draft autosave, manual Save, Save & Exit, crash/reload recovery, backup/restore, serialized writes, and fail-stop transitions.
+2. Run the synthetic **browser** persistence audit in the target environment. Enable Michael only after it passes.
 3. Add delayed-retrieval item generation for Day 2 / Day 7 / Day 21 reviews.
 4. Build Track A controlled diagnostics and deterministic mastery transitions without contaminating Track B evidence.
 5. Extract reusable learner configuration and module boundaries so Michael remains an isolated instance while the Level-Up core becomes reusable.

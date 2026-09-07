@@ -14,6 +14,8 @@
   let state = null;
   let current = null;
   let saveHealthy = false;
+  let writeSequence = Promise.resolve();
+  let draftSaveTimer = null;
 
   const freshState = () => ({
     schemaVersion:1,
@@ -84,9 +86,15 @@
 
   async function save(reason="update"){
     state.updatedAt=new Date().toISOString();
+    const snapshot=JSON.parse(JSON.stringify(state));
+    const task=writeSequence.catch(()=>{}).then(async()=>{
+      await idbPut(snapshot,STATE_KEY);
+      localStorage.setItem(BACKUP_KEY,JSON.stringify(snapshot));
+      return true;
+    });
+    writeSequence=task;
     try{
-      await idbPut(state);
-      localStorage.setItem(BACKUP_KEY,JSON.stringify(state));
+      await task;
       saveHealthy=true;renderSaveStatus();
       return true;
     }catch(err){
@@ -144,6 +152,133 @@
     return value && selector?.dataset?.accessConditionSource==="OBSERVED" ? "OBSERVED" : "UNRECORDED";
   }
 
+
+  function upsertSessionRecord(session){
+    if(!session || !Array.isArray(state.sessions))return;
+    const copy=JSON.parse(JSON.stringify(session));
+    const index=state.sessions.findIndex(x=>x.id===session.id);
+    if(index>=0)state.sessions[index]=copy;else state.sessions.push(copy);
+  }
+
+  function recoverableSession(){
+    const session=state?.activeSession;
+    return !!(session && ["ACTIVE","PAUSED","INTERRUPTED_PRESERVED"].includes(session.status) && lessonById(session.lessonId));
+  }
+
+  function captureDraftFromUI(){
+    if(!current || !current.session)return null;
+    const session=current.session;
+    const draft={phase:session.phase,itemIndex:session.itemIndex,savedAt:now()};
+    if(session.phase==="TEACH"){
+      const teachAccess=document.getElementById("teachAccess");
+      draft.sayBack=document.getElementById("sayBack")?.value??"";
+      draft.access_condition=validAccessCondition(teachAccess?.value);
+      draft.access_condition_source=accessSourceFor(teachAccess,draft.access_condition);
+    }else if(session.phase==="CHECK_AFTER_TEACH" || session.phase==="CHECK_ONLY" || session.phase==="RETRIEVAL"){
+      const free=document.getElementById("freeAnswer");
+      const selected=document.querySelector("input[name=answer]:checked");
+      const confidence=document.querySelector("input[name=confidence]:checked");
+      const access=document.getElementById("itemAccessCondition");
+      draft.freeAnswer=free?.value??"";
+      draft.choiceValue=selected?.value??null;
+      draft.confidence=confidence?.value??null;
+      draft.access_condition=validAccessCondition(access?.value);
+      draft.access_condition_source=accessSourceFor(access,draft.access_condition);
+    }
+    session.draft=draft;
+    state.activeSession=session;
+    upsertSessionRecord(session);
+    return draft;
+  }
+
+  function restoreDraftToUI(){
+    if(!current?.session?.draft)return;
+    const d=current.session.draft;
+    if(d.phase!==current.session.phase || d.itemIndex!==current.session.itemIndex)return;
+    if(current.session.phase==="TEACH"){
+      const sayBack=document.getElementById("sayBack");if(sayBack)sayBack.value=d.sayBack??"";
+      const access=document.getElementById("teachAccess");if(access){access.value=d.access_condition??"";access.dataset.accessConditionSource=d.access_condition_source||"UNRECORDED"}
+    }else{
+      const free=document.getElementById("freeAnswer");if(free)free.value=d.freeAnswer??"";
+      if(d.choiceValue!=null){const radio=document.querySelector(`input[name=answer][value="${d.choiceValue}"]`);if(radio)radio.checked=true}
+      if(d.confidence){const confidence=document.querySelector(`input[name=confidence][value="${d.confidence}"]`);if(confidence)confidence.checked=true}
+      const access=document.getElementById("itemAccessCondition");if(access){access.value=d.access_condition??"";access.dataset.accessConditionSource=d.access_condition_source||"UNRECORDED"}
+    }
+  }
+
+  function bindDraftAutosave(){
+    if(!current)return;
+    const selectors=["#sayBack","#teachAccess","#freeAnswer","#itemAccessCondition","input[name=answer]","input[name=confidence]"];
+    document.querySelectorAll(selectors.join(",")).forEach(el=>{
+      const isTyping=el.tagName==="INPUT" && el.type==="text" || el.tagName==="TEXTAREA";
+      const event=isTyping?"input":"change";
+      el.addEventListener(event,()=>{
+        if(isTyping)queueDraftSave("draft autosave");
+        else{clearTimeout(draftSaveTimer);captureDraftFromUI();void save("draft autosave")}
+      });
+    });
+  }
+
+  function queueDraftSave(reason="draft autosave"){
+    if(!current)return;
+    clearTimeout(draftSaveTimer);
+    captureDraftFromUI();
+    draftSaveTimer=setTimeout(async()=>{if(current){captureDraftFromUI();await save(reason)}},500);
+  }
+
+  async function manualSave(){
+    if(current)captureDraftFromUI();
+    const ok=await save("manual save");
+    if(ok){const el=document.getElementById("saveStatus");if(el)el.innerHTML="<span class='statusdot'></span>Saved now"}
+    return ok;
+  }
+
+  async function saveAndExit(){
+    if(!current){await manualSave();location.hash="dashboard";return}
+    clearTimeout(draftSaveTimer);
+    captureDraftFromUI();
+    current.session.status="PAUSED";
+    current.session.pausedAt=now();
+    state.activeSession=current.session;
+    upsertSessionRecord(current.session);
+    if(!await save("save and exit"))return;
+    speechSynthesis?.cancel?.();
+    current=null;
+    location.hash="dashboard";
+    render();
+  }
+
+  async function resumeInterruptedSession(){
+    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. The preserved session will remain saved.");return}
+    const session=state.activeSession;
+    if(!recoverableSession()){alert("There is no preserved session to resume.");return}
+    const lesson=lessonById(session.lessonId);
+    session.status="ACTIVE";
+    session.resumedAt=now();
+    state.activeSession=session;
+    upsertSessionRecord(session);
+    if(!await save("resume session"))return;
+    current={lesson,session};
+    if(session.phase==="TEACH")renderLessonTeach();else renderQuestion();
+  }
+
+  async function endPreservedSession(){
+    const session=state.activeSession;
+    if(!recoverableSession())return;
+    session.status="ENDED_PRESERVED";
+    session.endedAt=now();
+    upsertSessionRecord(session);
+    state.activeSession=null;
+    if(!await save("end preserved session"))return;
+    current=null;render();
+  }
+
+  function recoveryNotice(){
+    if(current || !recoverableSession())return "";
+    const session=state.activeSession;const lesson=lessonById(session.lessonId);
+    return `<div class="notice" style="border-color:#0369a1;background:#082f49;color:#bae6fd"><strong>Session preserved.</strong> ${escapeHTML(lesson?.title||session.lessonId)} stopped before completion. Nothing was deleted. ${session.draft?.savedAt?`Last draft save: ${fmt(session.draft.savedAt)}.`:""}<div class="row" style="margin-top:10px"><button class="btn primary" ${RUNTIME_ENABLED?"":"disabled"} onclick="window.MLUL.resumeInterruptedSession()">Resume session</button><button class="btn" onclick="window.MLUL.endPreservedSession()">End session, keep evidence</button></div></div>`;
+  }
+
   function renderSaveStatus(){
     const el=document.getElementById("saveStatus");
     if(!el)return;
@@ -174,10 +309,11 @@
     return `<div class="shell">
       <div class="top">
         <div class="brand"><h1>Michael Level-Up Lab</h1><p>Permanent system foundation · Track B live first</p></div>
-        <div class="badges"><span id="saveStatus" class="badge"></span><span class="badge warn">Track B = PRIOR_INSTRUCTION</span></div>
+        <div class="badges"><button class="btn" onclick="window.MLUL.manualSave()">Save</button><span id="saveStatus" class="badge"></span><span class="badge warn">Track B = PRIOR_INSTRUCTION</span></div>
       </div>
       <div class="notice"><strong>Evidence rule:</strong> Track B teaches Michael now. Every taught skill is permanently labeled <strong>PRIOR_INSTRUCTION</strong>. Raw responses and support conditions are stored separately from interpretation. Track A controlled diagnostics will never treat these skills as a clean cold baseline.</div>
       ${RUNTIME_ENABLED?"":`<div class="notice" style="border-color:#b91c1c;background:#450a0a;color:#fecaca"><strong>BUILD UNDER AUDIT — STUDENT USE DISABLED.</strong> Michael cannot start lessons in this build. Frozen evidence enums are wired; the final local-persistence and synthetic-recovery audit must pass before runtime is enabled.</div>`}
+      ${recoveryNotice()}
       ${state?.backup?.pendingAfterLesson?`<div class="notice" style="border-color:#b45309;background:#451a03;color:#fde68a"><strong>Portable backup still pending.</strong> A lesson completed and the browser cannot confirm that an exported file was actually saved. ${state.backup.lastExportAttemptedAt?`An export was attempted ${fmt(state.backup.lastExportAttemptedAt)}, but the browser cannot confirm the file was actually saved.`:`No export attempt is recorded for this lesson yet.`}</div>`:""}
       <div class="nav">
         ${navBtn("dashboard","Dashboard")}${navBtn("track-b","Track B")}${navBtn("parent","Parent View")}${navBtn("evidence","Evidence")}${navBtn("reviews","Review Queue")}${navBtn("track-a","Track A")}${navBtn("backup","Backup")}
@@ -222,7 +358,8 @@
     const ok=await persistenceHealthCheck();renderSaveStatus();
     if(!ok){alert("The app cannot verify persistence, so the lesson will not start.");return}
     const session={id:`sess_${Date.now()}`,track:"B",subject,lessonId:id,startedAt:now(),phase:"TEACH",instructionDelivered:false,itemIndex:0,responses:[],access_policy:{allowed_access_conditions:[...ACCESS_CONDITIONS],extra_processing_available:true,parent_verbatim_available:true},teach_access_condition:null,teach_access_condition_source:"UNRECORDED",status:"ACTIVE"};
-    state.activeSession=session;state.sessions.push(session);await save("start lesson");
+    state.activeSession=session;upsertSessionRecord(session);
+    if(!await save("start lesson"))return;
     current={lesson,session};renderLessonTeach();
   }
 
@@ -234,8 +371,8 @@
       <div class="callout purple"><strong>Say it back:</strong> Michael explains the idea in his own words. Parent can type his exact words below. This is teaching evidence, not a diagnostic score.</div>
       <label class="small">How did Michael access this teaching block?</label><select id="teachAccess" onchange="window.MLUL.markAccessObserved(this)">${accessOptions(current.session.teach_access_condition)}</select>
       <div class="spacer"></div><label class="small">Michael's explanation (optional but useful)</label><textarea id="sayBack" rows="3" placeholder="Type exactly what Michael says"></textarea>
-      <div class="spacer"></div><button class="btn primary" onclick="window.MLUL.beginChecks()">Continue to Try</button>
-    </div>`);renderSaveStatus();window.scrollTo({top:0,behavior:"smooth"});
+      <div class="spacer"></div><div class="row"><button class="btn primary" onclick="window.MLUL.beginChecks()">Continue to Try</button><button class="btn" onclick="window.MLUL.manualSave()">Save</button><button class="btn" onclick="window.MLUL.saveAndExit()">Save & Exit</button></div>
+    </div>`);renderSaveStatus();restoreDraftToUI();bindDraftAutosave();window.scrollTo({top:0,behavior:"smooth"});
   }
 
   function readTeach(){
@@ -243,7 +380,7 @@
     current.session.teach_access_condition="SYSTEM_READ_ALOUD";
     current.session.teach_access_condition_source="OBSERVED";
     const selector=document.getElementById("teachAccess");if(selector){selector.value="SYSTEM_READ_ALOUD";markAccessObserved(selector)}
-    speak(t);
+    speak(t);clearTimeout(draftSaveTimer);captureDraftFromUI();void save("teach read-aloud access");
   }
 
   async function beginChecks(){
@@ -257,7 +394,7 @@
       state.evidence.push({id:`ev_${Date.now()}`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",subject:current.session.subject,skillId:current.lesson.id,evidenceType:"THINK_ALOUD",rawResponse:sayBack,interpretation:null,assistance_level:assistanceLevelForSession(current.session),access_condition:teachAccess,access_condition_source:teachAccessSource,access_observation:{access_condition:teachAccess,access_condition_source:teachAccessSource,parent_verbatim_used:true,extra_processing_available:true}});
     }
     current.session.instructionDelivered=true;
-    current.session.phase="CHECK_AFTER_TEACH";current.session.itemIndex=0;state.activeSession=current.session;
+    current.session.phase="CHECK_AFTER_TEACH";current.session.itemIndex=0;current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);
     if(!await save("begin checks"))return;
     renderQuestion();
   }
@@ -270,14 +407,14 @@
       <div class="question">${escapeHTML(q.q)}</div><div class="choices">${input}</div>
       <label class="small">How was this question accessed?</label><select id="itemAccessCondition" onchange="window.MLUL.markAccessObserved(this)">${accessOptions(null)}</select>
       <div class="spacer"></div><div class="row"><label class="small"><input type="radio" name="confidence" value="sure"> Sure</label><label class="small"><input type="radio" name="confidence" value="kinda"> Kinda sure</label><label class="small"><input type="radio" name="confidence" value="guess"> Guessing</label></div>
-      <div class="spacer"></div><button class="btn primary" onclick="window.MLUL.submitAnswer()">Submit answer</button><div id="feedback"></div>
-    </div>`);renderSaveStatus();
+      <div class="spacer"></div><div class="row"><button class="btn primary" onclick="window.MLUL.submitAnswer()">Submit answer</button><button class="btn" onclick="window.MLUL.manualSave()">Save</button><button class="btn" onclick="window.MLUL.saveAndExit()">Save & Exit</button></div><div id="feedback"></div>
+    </div>`);renderSaveStatus();restoreDraftToUI();bindDraftAutosave();
   }
 
   function readQuestion(){
     const q=current.lesson.checks[current.session.itemIndex];
     const selector=document.getElementById("itemAccessCondition");if(selector){selector.value="SYSTEM_READ_ALOUD";markAccessObserved(selector)}
-    speak(q.q+(q.choices?" Choices. "+q.choices.join(". "):""));
+    speak(q.q+(q.choices?" Choices. "+q.choices.join(". "):""));clearTimeout(draftSaveTimer);captureDraftFromUI();void save("question read-aloud access");
   }
 
   async function submitAnswer(){
@@ -290,7 +427,7 @@
     const accessConditionSource=accessSourceFor(accessSelector,accessCondition);
     const assistanceLevel=assistanceLevelForSession(current.session);
     const ev={id:`ev_${Date.now()}_${current.session.itemIndex}`,createdAt:now(),studentId:"michael",track:"B",evidence_class:"INFORMAL_TRACK_B",instruction_exposure_status:"PRIOR_INSTRUCTION",subject:current.session.subject,skillId:current.lesson.id,itemId:q.id,prompt:q.q,rawResponse:raw,isCorrect:correct,confidence,assistance_level:assistanceLevel,access_condition:accessCondition,access_condition_source:accessConditionSource,access_observation:{access_condition:accessCondition,access_condition_source:accessConditionSource,extra_processing_available:true,parent_verbatim_available:true},interpretation:correct?"immediate taught-response correct":"immediate taught-response needs more support"};
-    state.evidence.push(ev);current.session.responses.push(ev);state.activeSession=current.session;
+    state.evidence.push(ev);current.session.responses.push(ev);current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);
     if(!await save("answer"))return;
     document.querySelectorAll("input").forEach(x=>x.disabled=true);
     const fb=document.getElementById("feedback");fb.className="feedback "+(correct?"good":"warn");fb.innerHTML=`<strong>${correct?"Yes — that's it.":"Not yet."}</strong><div class="small" style="margin-top:6px">${escapeHTML(q.why)}</div><div class="small muted" style="margin-top:6px">Because this is Track B, teaching feedback is allowed after Michael answers.</div><button class="btn ${correct?"good":"warn"}" style="margin-top:10px" onclick="window.MLUL.nextQuestion()">${current.session.itemIndex===current.lesson.checks.length-1?"Finish lesson":"Next"}</button>`;
@@ -298,18 +435,18 @@
 
   async function nextQuestion(){
     current.session.itemIndex++;
-    if(current.session.itemIndex<current.lesson.checks.length){state.activeSession=current.session;await save("next question");renderQuestion();return}
+    if(current.session.itemIndex<current.lesson.checks.length){current.session.draft=null;state.activeSession=current.session;upsertSessionRecord(current.session);if(!await save("next question"))return;renderQuestion();return}
     await finishLesson();
   }
 
   async function finishLesson(){
     const r=current.session.responses;const correct=r.filter(x=>x.isCorrect).length;const total=r.length;const score=Math.round(correct/total*100);
     const old=lessonStatus(current.lesson.id);state.lessonState[current.lesson.id]={status:"COMPLETED",score,attempts:(old.attempts||0)+1,completedAt:now(),trackBProgress:trackBProgressFromScore(score),memoryStrength:"FRAGILE",instruction_exposure_status:"PRIOR_INSTRUCTION"};
-    current.session.status="COMPLETED";current.session.completedAt=now();state.activeSession=null;
+    current.session.status="COMPLETED";current.session.completedAt=now();current.session.draft=null;upsertSessionRecord(current.session);state.activeSession=null;
     scheduleReviews(current.lesson.id,current.session.subject);
     if(!state.backup)state.backup={lastExportAttemptedAt:null,pendingAfterLesson:false};
     state.backup.pendingAfterLesson=true;
-    await save("finish lesson");
+    if(!await save("finish lesson"))return;
     document.getElementById("app").innerHTML=shell(`<div class="card center"><span class="pill good">Lesson complete</span><h2 style="margin-top:12px">${current.lesson.title}</h2><div class="big">${correct}/${total}</div><p class="muted">Immediate Track B check</p><div class="callout"><strong>This is not mastery and does not write a canonical lifecycle state.</strong> Track B immediate-check result: ${trackBProgressFromScore(score)}. Memory remains FRAGILE until delayed retrieval shows it sticks.</div><div class="callout warn" style="margin-top:14px"><strong>Portable backup due now.</strong> Download the learner backup before ending this local-only pilot session.</div><div class="row" style="justify-content:center"><button class="btn primary" onclick="window.MLUL.exportBackup()">Download backup now</button><button class="btn" onclick="location.hash='track-b'">Back to Track B</button></div></div>`);renderSaveStatus();current=null;
   }
 
@@ -398,14 +535,17 @@
       state=normalizeStateShape(isValidLearnerState(backupState)?backupState:freshState());
       saveHealthy=false;
     }
-    window.addEventListener("hashchange",()=>{speechSynthesis?.cancel?.();current=null;render()});
+    window.addEventListener("hashchange",async()=>{speechSynthesis?.cancel?.();if(current){clearTimeout(draftSaveTimer);captureDraftFromUI();if(!await save("navigation draft"))return}current=null;render()});
     if(state.activeSession && state.activeSession.status==="ACTIVE"){
-      // Do not auto-resume without explicit parent choice. The record is preserved and visible in evidence.
-      state.activeSession.status="INTERRUPTED_PRESERVED";state.activeSession=null;await save("recover interrupted session");
+      // Crash/reload recovery: preserve the session in place and require an explicit resume or end choice.
+      state.activeSession.status="INTERRUPTED_PRESERVED";
+      state.activeSession.interruptedAt=now();
+      upsertSessionRecord(state.activeSession);
+      await save("recover interrupted session");
     }
     render();
   }
 
-  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,exportBackup,importBackup,checkPersistenceUI,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor}};
+  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord}};
   init();
 })();
