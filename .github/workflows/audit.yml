@@ -15,6 +15,7 @@ jobs:
       - name: Syntax check engines
         run: |
           node --check app.js
+          node --check state-integrity.js
           node --check review-engine.js
           node --check track-a-engine.js
           node --check track-a-diagnostic.js
@@ -45,3 +46,5 @@ jobs:
         run: node tests/track-a-mastery-state-i.test.mjs
       - name: Run formal Track A mastery UI regression
         run: node tests/track-a-mastery-ui-i.test.mjs
+      - name: Run independent-audit release integrity regression
+        run: node tests/release-integrity-j.test.mjs
