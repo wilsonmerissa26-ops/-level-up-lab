@@ -15,8 +15,9 @@ assert.match(source, /idbPut\(probe,PROBE_KEY\)/); pass('health probe writes pro
 assert.match(source, /idbGet\(PROBE_KEY\)/); pass('health probe reads probe key');
 assert.doesNotMatch(source, /await idbPut\(probe\);/); pass('legacy destructive probe write removed');
 assert.doesNotMatch(source, /await idbPut\(state\|\|freshState\(\)\);/); pass('health check no longer restores state after overwrite');
-assert.match(source, /isValidLearnerState\(diskState\)/); pass('disk state is structurally validated');
-assert.match(source, /const backupState=readLocalBackup\(\)/); pass('backup fallback exists');
+assert.match(source, /prepareLoadedStateSafe\(rawDisk,"PRIMARY"\)/); pass('primary disk state is migration-aware and structurally validated');
+assert.match(source, /prepareLoadedStateSafe\(rawMirror,"MIRROR"\)/); pass('mirror fallback is independently validated before recovery');
+assert.match(source, /STATE_INTEGRITY\.compareRevisions\(rawDisk,rawMirror\)/); pass('validated primary and mirror are revision-compared');
 
 // Frozen evidence vocabulary.
 for (const value of ['INDEPENDENT','CLARIFIED','HINTED','GUIDED','TAUGHT','PARENT_ASSISTED']) assert.match(source, new RegExp(`"${value}"`));
