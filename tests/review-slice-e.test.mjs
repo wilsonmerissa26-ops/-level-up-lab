@@ -29,11 +29,13 @@ for(const skillId of ENGINE.SKILL_IDS){
     for(const item of a){
       assert.ok(!teachingPrompts.has(item.q),`${skillId} reused exact teaching prompt`);
       assert.ok(item.choices || Object.hasOwn(item,'free'),`${skillId} item is scorable`);
+      if(item.choices)assert.equal(new Set(item.choices).size,item.choices.length,`${skillId} generated duplicate answer choices`);
     }
     if(windowLabel==='Day 21')assert.ok(a.some(x=>x.transfer),`${skillId} Day 21 needs a transfer item`);
   }
 }
 pass('all review windows generate fresh deterministic scorable items');
+pass('generated multiple-choice answers are unique');
 pass('Day 21 includes transfer evidence for every skill');
 
 assert.match(appSource,/function startReview\(/); pass('review runner start action exists');
@@ -47,5 +49,9 @@ assert.match(appSource,/memoryStrengthForReview\(/); pass('review memory-strengt
 assert.doesNotMatch(appSource,/skillState\s*:/); pass('review slice does not write canonical lifecycle state');
 assert.match(appSource,/if\(!await save\("review answer"\)\)return/); pass('review answer fail-stops on persistence failure');
 assert.match(appSource,/if\(!await save\("finish review"\)\)return/); pass('review completion fail-stops on persistence failure');
+assert.match(appSource,/function answersMatch\(/); pass('robust free-response scorer exists');
+assert.match(appSource,/pushEvidenceOnce\(ev\)/); pass('evidence writes are idempotent across save retries');
+assert.match(appSource,/id:`review_ev_\$\{current\.session\.id\}_\$\{current\.session\.itemIndex\}`/); pass('review evidence ids are stable across retries');
+assert.match(appSource,/id:`ev_\$\{current\.session\.id\}_\$\{current\.session\.itemIndex\}`/); pass('lesson evidence ids are stable across retries');
 
 console.log('\nAll Slice E delayed-review checks passed.');
