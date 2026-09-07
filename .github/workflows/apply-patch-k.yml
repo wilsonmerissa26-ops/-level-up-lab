@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - scripts/apply-patch-k.py
+      - scripts/fix-patch-k-generator.py
       - scripts/trigger-patch-k.txt
       - .github/workflows/apply-patch-k.yml
 
@@ -19,7 +20,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply Patch K integration
-        run: python3 scripts/apply-patch-k.py
+        run: |
+          python3 scripts/fix-patch-k-generator.py
+          python3 scripts/apply-patch-k.py
       - name: Syntax checks
         run: |
           node --check app.js
