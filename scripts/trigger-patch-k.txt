@@ -1,1 +1,1 @@
-Run Patch K integration after fixing degraded-write provenance integration assertion. Retry 5.
+Run Patch K integration after scoping persistent-storage request assertion to init. Retry 6.
