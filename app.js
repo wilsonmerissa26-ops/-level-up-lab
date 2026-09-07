@@ -8,6 +8,7 @@
   const TRACK_A_MASTERY_STATE = window.LEVEL_UP_TRACK_A_MASTERY_STATE;
   const TRACK_A_MASTERY = window.LEVEL_UP_TRACK_A_MASTERY;
   const STATE_INTEGRITY = window.LEVEL_UP_STATE_INTEGRITY;
+  const STORAGE_DURABILITY = window.LEVEL_UP_STORAGE_DURABILITY;
   const DB_NAME = "MichaelLevelUpLab";
   const DB_VERSION = 1;
   const STORE = "state";
@@ -25,11 +26,19 @@
   let saveHealthy = false;
   let backupMirrorHealthy = true;
   let lastDurableState = null;
+  let lastDurableRevision = 0;
+  let redundancyComparison = "UNVERIFIED";
+  let storageRecoveryIssue = null;
+  let firstRunDecisionRequired = false;
+  let persistenceStatus = {state:"UNKNOWN_OR_UNSUPPORTED",supported:false,canRequest:false,checked:false,error:null};
   let writeSequence = Promise.resolve();
   let draftSaveTimer = null;
 
   const freshState = () => ({
-    schemaVersion:1,
+    schemaVersion:2,
+    stateRevision:null,
+    learnerRecordOrigin:{type:"NEW",decidedAt:new Date().toISOString(),priorRecordOffered:false},
+    restoredFrom:null,
     student:CONTENT.student,
     activeTrack:"B",
     lessonState:{},
@@ -86,16 +95,28 @@
   }
 
   function isValidLearnerState(value){
-    return !!(STATE_INTEGRITY && value && value.schemaVersion===STATE_INTEGRITY.SUPPORTED_SCHEMA_VERSION && STATE_INTEGRITY.coreLearnerStateValid(value) && !STATE_INTEGRITY.containsLegacyFields(value));
+    if(!STATE_INTEGRITY)return false;
+    try{STATE_INTEGRITY.validateCurrentState(value);return true}catch(_){return false}
   }
 
-  function readLocalBackup(){
+  function prepareLoadedStateSafe(value,source){
+    if(!STATE_INTEGRITY||!value)return null;
+    try{return STATE_INTEGRITY.prepareLoadedState(value,{source,now:new Date().toISOString()})}catch(_){return null}
+  }
+
+  function readLocalBackupRaw(){
+    try{const raw=localStorage.getItem(BACKUP_KEY);return raw?JSON.parse(raw):null}catch(_){return null}
+  }
+
+  function readLocalBackup(){return prepareLoadedStateSafe(readLocalBackupRaw(),"MIRROR")}
+
+  function mirrorWriteAndReadback(snapshot){
     try{
-      const raw=localStorage.getItem(BACKUP_KEY);
-      if(!raw)return null;
-      const parsed=JSON.parse(raw);
-      return isValidLearnerState(parsed)?parsed:null;
-    }catch(_){return null}
+      localStorage.setItem(BACKUP_KEY,JSON.stringify(snapshot));
+      const raw=localStorage.getItem(BACKUP_KEY);if(!raw)return false;
+      const readback=JSON.parse(raw);
+      return readback?.stateRevision===snapshot.stateRevision && JSON.stringify(readback)===JSON.stringify(snapshot);
+    }catch(err){console.warn("Local backup mirror failed",err);return false}
   }
 
   function rebindLiveStateReferences(){
@@ -103,25 +124,37 @@
     if(currentTrackA?.session && state?.trackAActiveSession && currentTrackA.session.id===state.trackAActiveSession.id) currentTrackA.session=state.trackAActiveSession;
   }
 
+  function sameOriginRedundancyDegraded(){return !backupMirrorHealthy || ["MIRROR_AHEAD","MIRROR_STALE"].includes(redundancyComparison)}
+  function redundancyOverrideAcknowledged(){return !!state?.backup?.redundancyOverrideAcknowledgedAt}
+  function evidenceSessionAllowed(){
+    if(!sameOriginRedundancyDegraded()||redundancyOverrideAcknowledged())return true;
+    alert("Same-origin redundancy is degraded. Open Backup to repair it or explicitly acknowledge degraded redundancy before collecting learner evidence.");
+    return false;
+  }
+
   async function save(reason="update"){
+    if(!state)return false;
     state.updatedAt=new Date().toISOString();
-    const snapshot=JSON.parse(JSON.stringify(state));
+    const candidate=JSON.parse(JSON.stringify(state));
     const task=writeSequence.catch(()=>{}).then(async()=>{
-      // IndexedDB is the primary learner record. The localStorage copy is a secondary mirror.
-      await idbPut(snapshot,STATE_KEY);
-      let backupOk=true;
-      try{localStorage.setItem(BACKUP_KEY,JSON.stringify(snapshot))}catch(err){backupOk=false;console.warn("Local backup mirror failed",err)}
-      return {backupOk};
+      const revision=STATE_INTEGRITY.nextRevision(lastDurableRevision);
+      candidate.schemaVersion=STATE_INTEGRITY.SUPPORTED_SCHEMA_VERSION;
+      candidate.stateRevision=revision;
+      await idbPut(candidate,STATE_KEY);
+      const backupOk=mirrorWriteAndReadback(candidate);
+      return {backupOk,revision,snapshot:JSON.parse(JSON.stringify(candidate))};
     });
     writeSequence=task;
     try{
       const result=await task;
-      lastDurableState=JSON.parse(JSON.stringify(snapshot));
+      lastDurableRevision=result.revision;
+      if(state)state.stateRevision=result.revision;
+      lastDurableState=JSON.parse(JSON.stringify(result.snapshot));
       backupMirrorHealthy=result.backupOk;
+      redundancyComparison=result.backupOk?"IN_SYNC":"MIRROR_STALE";
       saveHealthy=true;renderSaveStatus();
       return true;
     }catch(err){
-      // Roll memory back to the last state that actually reached primary storage.
       if(lastDurableState){state=JSON.parse(JSON.stringify(lastDurableState));rebindLiveStateReferences()}
       saveHealthy=false;renderSaveStatus();
       alert("Saving failed. This change was rolled back to the last durable learner state. Do not continue until persistence is working.");
@@ -317,8 +350,11 @@
   function renderSaveStatus(){
     const el=document.getElementById("saveStatus");
     if(!el)return;
-    el.className="badge "+(saveHealthy?"good":"warn");
-    el.innerHTML=(saveHealthy?"<span class='statusdot'></span>Persistence active":"<span class='statusdot bad'></span>Persistence problem");
+    const good=saveHealthy&&!sameOriginRedundancyDegraded();
+    el.className="badge "+(good?"good":"warn");
+    if(!saveHealthy)el.innerHTML="<span class='statusdot bad'></span>Primary persistence problem";
+    else if(sameOriginRedundancyDegraded())el.innerHTML="<span class='statusdot bad'></span>Primary saved · mirror degraded";
+    else el.innerHTML="<span class='statusdot'></span>Primary + mirror synced";
   }
 
   function escapeHTML(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
@@ -336,6 +372,7 @@
     const found=state.evidence.find(x=>x.id===ev.id);if(found)return found;
     const session=sessionOverride||evidenceSessionContext();
     if(session&&STATE_INTEGRITY)STATE_INTEGRITY.linkEvidenceToSession(ev,session,state.evidence);
+    if(STATE_INTEGRITY)STATE_INTEGRITY.annotateWriteProvenance(ev,sameOriginRedundancyDegraded());
     state.evidence.push(ev);return ev
   }
   function pushSessionResponseOnce(session,ev){const found=session.responses.find(x=>x.id===ev.id);if(found)return found;session.responses.push(ev);return ev}
@@ -403,6 +440,7 @@
   }
 
   async function startLesson(id,subject){
+    if(!evidenceSessionAllowed())return;
     if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not use it yet.");return}
     const lesson=lessonById(id);if(!lesson)return;
     if(!isReady(lesson)){alert("Finish the prerequisite first.");return}
@@ -524,6 +562,7 @@
   }
 
   async function startReview(reviewId){
+    if(!evidenceSessionAllowed())return;
     if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take reviews yet.");return}
     if(recoverableSession()){alert("A session is already preserved. Resume it or end it before starting another review.");return}
     const review=reviewById(reviewId);if(!review){alert("Review not found.");return}
@@ -726,6 +765,7 @@
   }
 
   async function startTrackADiagnostic(skillId){
+    if(!evidenceSessionAllowed())return;
     if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take Track A diagnostics yet.");return}
     if(!TRACK_A_ENGINE||!TRACK_A_DIAGNOSTIC){alert("Track A engine is not loaded.");return}
     if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session before starting a Track A diagnostic.");return}
@@ -799,6 +839,7 @@
   async function endTrackADiagnostic(){return endTrackAPath()}
 
   async function startTrackARepair(skillId){
+    if(!evidenceSessionAllowed())return;
     if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not start repair yet.");return}
     if(!TRACK_A_REMEDIATION||!TRACK_A_ENGINE){alert("Track A remediation module is unavailable.");return}
     if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}
@@ -852,6 +893,7 @@
   }
 
   async function startTrackAVerification(skillId){
+    if(!evidenceSessionAllowed())return;
     if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take verification yet.");return}if(!TRACK_A_VERIFICATION||!TRACK_A_ENGINE){alert("Track A verification module is unavailable.");return}if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}const rec=trackASkillRecord(skillId);if(rec.canonicalState!=="PRACTICING"){alert("Formal verification requires the skill to be in PRACTICING.");return}if(rec.lastRepair?.result!=="COMPONENT_VERIFIED"){alert("The smallest corrected component must be explicitly verified before formal verification.");return}const ok=await persistenceHealthCheck();renderSaveStatus();if(!ok){alert("The app cannot verify persistence, so formal verification will not start.");return}
     const id=`ta_verify_${Date.now()}_${skillId.replace(/[^A-Z0-9]/gi,"_")}`;const excluded=state.evidence.filter(e=>e.track==="A"&&e.skillId===skillId&&e.prompt_fingerprint).map(e=>e.prompt_fingerprint);const items=TRACK_A_VERIFICATION.generateVerification(skillId,id,excluded);const session={id,mode:"TRACK_A_VERIFICATION",track:"A",subject:"Math",skillId,startedAt:now(),phase:"VERIFICATION",itemIndex:0,items,responses:[],status:"ACTIVE"};state.trackAActiveSession=session;if(!await save("start Track A two-probe verification"))return;currentTrackA={session,skill:TRACK_A_DIAGNOSTIC.skill(skillId)};renderTrackAVerificationQuestion();
   }
@@ -888,6 +930,7 @@
   async function finalizeTrackAMastery(skillId){maybeFinalizeTrackAMastery(skillId);if(!await save("guarded Track A mastery decision"))return;render()}
 
   async function startTrackAMasteryTask(taskId){
+    if(!evidenceSessionAllowed())return;
     if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take formal retrieval yet.");return}
     if(!TRACK_A_MASTERY||!TRACK_A_MASTERY_STATE||!TRACK_A_ENGINE){alert("Formal mastery modules are unavailable.");return}
     if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}
@@ -919,41 +962,106 @@
     document.getElementById("app").innerHTML=shell(`<div class="card"><span class="pill ${completed.result==="PASSED"?"good":"warn"}">${escapeHTML(label)}</span><h2 style="margin-top:12px">${escapeHTML(TRACK_A_DIAGNOSTIC.skill(session.skillId).title)}</h2><p class="muted">${escapeHTML(masteryTaskLabel(task))} · Canonical state: ${escapeHTML(finalRec.canonicalState)} · Memory: ${escapeHTML(finalRec.memoryStrength||"FRAGILE")}</p><div class="callout"><strong>${escapeHTML(completed.result)}</strong><p class="small">${escapeHTML(guidance)}</p></div><button class="btn primary" onclick="location.hash='track-a'">Back to Track A</button></div>`);renderSaveStatus();currentTrackA=null;
   }
 
+  function persistenceLabel(){
+    const stateName=persistenceStatus?.state||"UNKNOWN_OR_UNSUPPORTED";
+    return stateName==="PERSISTENT"?"Persistent mode granted":stateName==="BEST_EFFORT"?"Best-effort storage":"Unknown or unsupported";
+  }
+
   function backupView(){
-    return shell(`<div class="grid"><div class="card c6"><h2>Backup</h2><p class="muted">IndexedDB saves every answer immediately in this browser. A JSON snapshot is the off-browser backup for the current self-contained pilot; the browser can record that an export was attempted but cannot prove the file was saved.</p><button class="btn primary" onclick="window.MLUL.exportBackup()">Attempt portable backup export</button><p class="tiny muted">Last export attempt: ${state.backup?.lastExportAttemptedAt?fmt(state.backup.lastExportAttemptedAt):"none yet"}</p></div><div class="card c6"><h2>Restore</h2><input type="file" id="importFile" accept="application/json,.json"><div class="spacer"></div><button class="btn" onclick="window.MLUL.importBackup()">Restore backup</button></div><div class="card c12"><h3>Local-storage retention requirement</h3><p class="small">For the audited local-only iPad pilot, install the web app to the Home Screen before use. A normal Safari tab is not accepted as the learner record's long-term storage environment. Cloud/server persistence may be added later for cross-device sync, off-device recovery, and commercial scale.</p></div><div class="card c12"><h3>Persistence health</h3><p id="healthText" class="small">Checking…</p><button class="btn" onclick="window.MLUL.checkPersistenceUI()">Run persistence test</button></div></div>`)
+    const standalone=STORAGE_DURABILITY?STORAGE_DURABILITY.isStandaloneEnvironment(window):false;
+    const mirrorText=sameOriginRedundancyDegraded()?`Degraded (${escapeHTML(redundancyComparison)})`:`Synced at revision ${escapeHTML(state.stateRevision??"pre-revision")}`;
+    return shell(`<div class="grid"><div class="card c6"><h2>External JSON backup</h2><p class="muted">This is the only protection layer here that survives total loss of this origin's browser storage.</p><button class="btn primary" onclick="window.MLUL.exportBackup()">Attempt portable backup export</button><p class="tiny muted">Last export attempt: ${state.backup?.lastExportAttemptedAt?fmt(state.backup.lastExportAttemptedAt):"none yet"}</p></div><div class="card c6"><h2>Restore JSON</h2><input type="file" id="importFile" accept="application/json,.json"><div class="spacer"></div><button class="btn" onclick="window.MLUL.importBackup()">Restore JSON backup</button></div><div class="card c6"><h3>Home Screen layer</h3><p class="small">Current display mode: <strong>${standalone?"Home Screen / standalone":"browser tab"}</strong>.</p><p class="tiny muted">Home Screen installation and persistent-storage mode address different browser-storage mechanisms. Neither replaces the external JSON backup.</p></div><div class="card c6"><h3>Persistent storage layer</h3><p class="small"><strong>${escapeHTML(persistenceLabel())}</strong></p><button class="btn" ${persistenceStatus?.canRequest?"":"disabled"} onclick="window.MLUL.requestPersistentStorage()">Request persistent storage</button><p class="tiny muted">This request only runs from this parent-facing button, never during init().</p></div><div class="card c6"><h3>Same-origin integrity</h3><p class="small">IndexedDB is authoritative. localStorage is a synchronization mirror, not an off-origin backup.</p><p class="small"><strong>Mirror:</strong> ${mirrorText}</p>${sameOriginRedundancyDegraded()&&!redundancyOverrideAcknowledged()?`<button class="btn" onclick="window.MLUL.acknowledgeRedundancyOverride()">Acknowledge degraded redundancy</button>`:""}</div><div class="card c6"><h3>Persistence health</h3><p id="healthText" class="small">Checking…</p><button class="btn" onclick="window.MLUL.checkPersistenceUI()">Run primary persistence test</button></div></div>`)
   }
 
   async function exportBackup(){
     if(!state.backup)state.backup={lastExportAttemptedAt:null,pendingAfterLesson:false};
     state.backup.lastExportAttemptedAt=now();
-    // Keep pendingAfterLesson true: a browser download gesture cannot prove that a durable backup file exists.
     const snapshot=JSON.stringify(state,null,2);
     const blob=new Blob([snapshot],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`Michael-Level-Up-Backup-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),3000);
     await save("backup exported");
   }
 
+  async function requestPersistentStorage(){
+    if(!STORAGE_DURABILITY){persistenceStatus={state:"UNKNOWN_OR_UNSUPPORTED",supported:false,canRequest:false,checked:true,error:"module unavailable"};render();return}
+    persistenceStatus=await STORAGE_DURABILITY.requestPersistentStorage(navigator.storage);
+    render();
+  }
+
+  async function refreshPersistenceStatus(){
+    if(!STORAGE_DURABILITY){persistenceStatus={state:"UNKNOWN_OR_UNSUPPORTED",supported:false,canRequest:false,checked:true,error:"module unavailable"};return persistenceStatus}
+    persistenceStatus=await STORAGE_DURABILITY.getPersistenceStatus(navigator.storage);
+    return persistenceStatus;
+  }
+
+  async function acknowledgeRedundancyOverride(){
+    if(!state.backup)state.backup={lastExportAttemptedAt:null,pendingAfterLesson:false};
+    state.backup.redundancyOverrideAcknowledgedAt=now();
+    if(!await save("acknowledge degraded redundancy"))return;
+    render();
+  }
+
+  function firstRunView(){
+    return `<div class="shell"><div class="card"><h2>No valid learner record is loaded</h2><p class="muted">This can be a true first run or total same-origin storage loss. Level-Up will not silently create a replacement record.</p><div class="callout warn"><strong>Choose deliberately.</strong> Restore an external JSON backup if one exists, or explicitly start a new learner record.</div><input type="file" id="importFile" accept="application/json,.json"><div class="spacer"></div><div class="row"><button class="btn primary" onclick="window.MLUL.importBackup()">Restore JSON backup</button><button class="btn" onclick="window.MLUL.createNewLearnerRecord()">Start a new learner record</button></div></div></div>`;
+  }
+
+  function mirrorAheadView(){
+    const issue=storageRecoveryIssue;
+    return `<div class="shell"><div class="card"><h2>Storage integrity decision required</h2><p class="muted">The localStorage mirror has a higher revision than authoritative IndexedDB. Level-Up will not guess which history to keep.</p><div class="callout warn"><strong>Primary revision:</strong> ${escapeHTML(STATE_INTEGRITY.revisionOf(issue?.rawPrimary)??"pre-revision")} · <strong>Mirror revision:</strong> ${escapeHTML(STATE_INTEGRITY.revisionOf(issue?.rawMirror)??"pre-revision")}</div><div class="row"><button class="btn primary" onclick="window.MLUL.resolveMirrorAhead('MIRROR')">Use newer mirror</button><button class="btn" onclick="window.MLUL.resolveMirrorAhead('PRIMARY')">Keep primary record</button></div></div></div>`;
+  }
+
+  async function createNewLearnerRecord(){
+    const hadPrior=!!storageRecoveryIssue;
+    state=normalizeStateShape(freshState());
+    state.learnerRecordOrigin=STATE_INTEGRITY.makeLearnerRecordOrigin("NEW",now(),hadPrior);
+    lastDurableRevision=STATE_INTEGRITY.maxObservedRevision([storageRecoveryIssue?.rawPrimary,storageRecoveryIssue?.rawMirror]);
+    firstRunDecisionRequired=false;storageRecoveryIssue=null;
+    if(!await save("create new learner record")){firstRunDecisionRequired=true;return}
+    render();
+  }
+
+  async function resolveMirrorAhead(choice){
+    const issue=storageRecoveryIssue;if(!issue||issue.type!=="MIRROR_AHEAD")return;
+    const observed=[issue.rawPrimary,issue.rawMirror,issue.primary,issue.mirror];
+    lastDurableRevision=STATE_INTEGRITY.maxObservedRevision(observed);
+    if(choice==="MIRROR"){
+      state=normalizeStateShape(STATE_INTEGRITY.prepareRestoreCandidate(issue.rawMirror||issue.mirror,{source:"MIRROR",now:now(),observedRevisions:observed}));
+    }else{
+      state=normalizeStateShape(JSON.parse(JSON.stringify(issue.primary)));
+      if(!state.backup)state.backup={lastExportAttemptedAt:null,pendingAfterLesson:false};
+      state.backup.lastRecoveryDecision={type:"KEEP_PRIMARY_OVER_AHEAD_MIRROR",decidedAt:now(),observedMirrorRevision:STATE_INTEGRITY.revisionOf(issue.rawMirror)};
+      state.stateRevision=lastDurableRevision||state.stateRevision;
+    }
+    const previousIssue=storageRecoveryIssue;storageRecoveryIssue=null;backupMirrorHealthy=false;redundancyComparison="MIRROR_AHEAD";
+    if(!await save("resolve mirror ahead")){storageRecoveryIssue=previousIssue;return}
+    render();
+  }
+
   function importBackup(){
-    const file=document.getElementById("importFile").files[0];if(!file){alert("Choose a backup file first.");return}
+    const file=document.getElementById("importFile")?.files?.[0];if(!file){alert("Choose a backup file first.");return}
     const r=new FileReader();r.onload=async()=>{
       try{
         const parsed=JSON.parse(r.result);
         if(!STATE_INTEGRITY)throw new Error("Restore validation module is unavailable.");
-        // Validate and clone before touching live learner state.
-        const candidate=normalizeStateShape(STATE_INTEGRITY.validateRestoreCandidate(parsed));
-        if(!isValidLearnerState(candidate))throw new Error("Backup failed post-normalization validation.");
+        const diskRaw=await idbGet(STATE_KEY).catch(()=>null);const mirrorRaw=readLocalBackupRaw();
+        const observed=[diskRaw,mirrorRaw,state];
+        const baseRevision=STATE_INTEGRITY.maxObservedRevision(observed);
+        const candidate=normalizeStateShape(STATE_INTEGRITY.prepareRestoreCandidate(parsed,{source:"JSON",now:now(),observedRevisions:observed}));
         const ok=await persistenceHealthCheck();renderSaveStatus();if(!ok)throw new Error("Persistence health check failed; restore was not attempted.");
-        const previous=JSON.parse(JSON.stringify(state));
-        state=candidate;
-        if(!await save("restore")){state=previous;rebindLiveStateReferences();throw new Error("Restore could not be durably saved; previous learner state was kept in memory.")}
+        const previous=state?JSON.parse(JSON.stringify(state)):null;const previousRevision=lastDurableRevision;
+        state=candidate;lastDurableRevision=baseRevision;
+        if(!await save("restore JSON")){state=previous;lastDurableRevision=previousRevision;rebindLiveStateReferences();throw new Error("Restore could not be durably saved; previous learner state was kept in memory.")}
+        firstRunDecisionRequired=false;storageRecoveryIssue=null;
         alert("Backup restored.");render();
       }catch(e){alert("Could not restore backup: "+e.message)}
     };r.readAsText(file)
   }
 
-  async function checkPersistenceUI(){const ok=await persistenceHealthCheck();renderSaveStatus();const el=document.getElementById("healthText");if(el)el.innerHTML=ok?"<span style='color:#9af0b8'>PASS: response persistence is working.</span>":"<span style='color:#ff9baa'>FAIL: do not run a lesson until storage is working.</span>"}
+  async function checkPersistenceUI(){const ok=await persistenceHealthCheck();renderSaveStatus();const el=document.getElementById("healthText");if(el)el.innerHTML=ok?"<span style='color:#9af0b8'>PASS: primary IndexedDB response persistence is working.</span>":"<span style='color:#ff9baa'>FAIL: do not run a lesson until primary storage is working.</span>"}
 
   function render(){
     if(current)return;
+    if(firstRunDecisionRequired){document.getElementById("app").innerHTML=firstRunView();return}
+    if(storageRecoveryIssue?.type==="MIRROR_AHEAD"){document.getElementById("app").innerHTML=mirrorAheadView();return}
     const route=getRoute();const view={dashboard, "track-b":trackB,parent:parentView,evidence:evidenceView,reviews:reviewsView,"track-a":trackA,backup:backupView}[route]||dashboard;
     document.getElementById("app").innerHTML=view();renderSaveStatus();if(route==="backup")checkPersistenceUI();
   }
@@ -961,50 +1069,48 @@
   async function init(){
     try{
       await openDB();
-      const diskState=await idbGet(STATE_KEY);
-      if(isValidLearnerState(diskState)){
-        state=normalizeStateShape(diskState);
-        // Disk is authoritative only after structural validation. Mirror it to backup.
-        localStorage.setItem(BACKUP_KEY,JSON.stringify(state));
-        saveHealthy=true;
+      await refreshPersistenceStatus();
+      const rawDisk=await idbGet(STATE_KEY);const rawMirror=readLocalBackupRaw();
+      const disk=prepareLoadedStateSafe(rawDisk,"PRIMARY");const mirror=prepareLoadedStateSafe(rawMirror,"MIRROR");
+      if(disk&&mirror){
+        const comparison=STATE_INTEGRITY.compareRevisions(rawDisk,rawMirror);
+        state=normalizeStateShape(disk);lastDurableRevision=STATE_INTEGRITY.maxObservedRevision([rawDisk,rawMirror,disk,mirror]);
+        if(comparison==="MIRROR_AHEAD"){
+          storageRecoveryIssue={type:"MIRROR_AHEAD",primary:disk,mirror,rawPrimary:rawDisk,rawMirror};backupMirrorHealthy=false;redundancyComparison=comparison;saveHealthy=true;
+        }else if(comparison==="UNKNOWN_PRE_REVISION"){
+          backupMirrorHealthy=false;redundancyComparison=comparison;saveHealthy=true;
+          if(!await save("bootstrap revision model"))throw new Error("Could not establish the first revision.");
+        }else if(comparison==="MIRROR_STALE"){
+          backupMirrorHealthy=mirrorWriteAndReadback(state);redundancyComparison=backupMirrorHealthy?"IN_SYNC":"MIRROR_STALE";saveHealthy=true;
+        }else{backupMirrorHealthy=true;redundancyComparison="IN_SYNC";saveHealthy=true}
+      }else if(disk){
+        state=normalizeStateShape(disk);lastDurableRevision=STATE_INTEGRITY.maxObservedRevision([rawDisk,disk]);saveHealthy=true;
+        if(STATE_INTEGRITY.revisionOf(rawDisk)==null){backupMirrorHealthy=false;redundancyComparison="UNKNOWN_PRE_REVISION";if(!await save("bootstrap primary revision"))throw new Error("Could not bootstrap primary revision.")}
+        else{backupMirrorHealthy=mirrorWriteAndReadback(state);redundancyComparison=backupMirrorHealthy?"IN_SYNC":"MIRROR_STALE"}
+      }else if(mirror){
+        const observed=[rawDisk,rawMirror,mirror];lastDurableRevision=STATE_INTEGRITY.maxObservedRevision(observed);
+        state=normalizeStateShape(STATE_INTEGRITY.prepareRestoreCandidate(rawMirror||mirror,{source:"MIRROR",now:now(),observedRevisions:observed}));
+        backupMirrorHealthy=false;redundancyComparison="MIRROR_STALE";saveHealthy=true;
+        if(!await save("restore mirror to primary"))throw new Error("Could not restore mirror to IndexedDB.");
       }else{
-        const backupState=readLocalBackup();
-        if(isValidLearnerState(backupState)){
-          // Recover the known-good backup to IndexedDB. Do not overwrite the backup first.
-          state=normalizeStateShape(backupState);
-          await idbPut(state,STATE_KEY);
-          saveHealthy=true;
-        }else{
-          // True first run: neither store contains a valid learner record.
-          state=normalizeStateShape(freshState());
-          await idbPut(state,STATE_KEY);
-          localStorage.setItem(BACKUP_KEY,JSON.stringify(state));
-          saveHealthy=true;
-        }
+        state=normalizeStateShape(freshState());firstRunDecisionRequired=true;saveHealthy=true;backupMirrorHealthy=false;redundancyComparison="UNVERIFIED";
+        if(rawDisk||rawMirror)storageRecoveryIssue={type:"NO_VALID_RECORD",rawPrimary:rawDisk,rawMirror};
       }
     }catch(e){
       console.error(e);
-      const backupState=readLocalBackup();
-      state=normalizeStateShape(isValidLearnerState(backupState)?backupState:freshState());
-      saveHealthy=false;
+      state=normalizeStateShape(freshState());firstRunDecisionRequired=true;saveHealthy=false;backupMirrorHealthy=false;redundancyComparison="UNVERIFIED";
     }
-    lastDurableState=JSON.parse(JSON.stringify(state));
+    if(state?.stateRevision){lastDurableRevision=state.stateRevision;lastDurableState=JSON.parse(JSON.stringify(state))}
     window.addEventListener("hashchange",async()=>{speechSynthesis?.cancel?.();if(current){clearTimeout(draftSaveTimer);captureDraftFromUI();if(!await save("navigation draft"))return}if(currentTrackA){currentTrackA.session.status="PAUSED";currentTrackA.session.pausedAt=now();state.trackAActiveSession=currentTrackA.session;if(!await save("Track A navigation pause"))return}current=null;currentTrackA=null;render()});
-    if(state.activeSession && state.activeSession.status==="ACTIVE"){
-      // Crash/reload recovery: preserve the session in place and require an explicit resume or end choice.
-      state.activeSession.status="INTERRUPTED_PRESERVED";
-      state.activeSession.interruptedAt=now();
-      upsertSessionRecord(state.activeSession);
-      await save("recover interrupted session");
+    if(!firstRunDecisionRequired&&!storageRecoveryIssue&&state.activeSession && state.activeSession.status==="ACTIVE"){
+      state.activeSession.status="INTERRUPTED_PRESERVED";state.activeSession.interruptedAt=now();upsertSessionRecord(state.activeSession);await save("recover interrupted session");
     }
-    if(state.trackAActiveSession && state.trackAActiveSession.status==="ACTIVE"){
-      state.trackAActiveSession.status="INTERRUPTED_PRESERVED";
-      state.trackAActiveSession.interruptedAt=now();
-      await save("recover interrupted Track A diagnostic");
+    if(!firstRunDecisionRequired&&!storageRecoveryIssue&&state.trackAActiveSession && state.trackAActiveSession.status==="ACTIVE"){
+      state.trackAActiveSession.status="INTERRUPTED_PRESERVED";state.trackAActiveSession.interruptedAt=now();await save("recover interrupted Track A diagnostic");
     }
     render();
   }
 
-  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,startTrackADiagnostic,readTrackAQuestion,submitTrackAAnswer,startTrackARepair,readTrackARepairTeach,beginTrackARepairChecks,readTrackARepairQuestion,submitTrackARepairAnswer,nextTrackARepairCheck,startTrackAVerification,readTrackAVerificationQuestion,submitTrackAVerificationAnswer,initializeTrackAMastery,startTrackAMasteryTask,readTrackAMasteryQuestion,submitTrackAMasteryAnswer,replaceTrackAMasteryTask,finalizeTrackAMastery,resumeTrackAPath,resumeTrackADiagnostic,saveAndExitTrackA,endTrackAPath,endTrackADiagnostic,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore,trackAPriorInstruction,trackAPromptIsFresh,trackAActiveRecoverable,trackARouteForSkill,ensureTrackAMasterySchedule,masteryRouteInfo,maybeFinalizeTrackAMastery}};
+  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,startTrackADiagnostic,readTrackAQuestion,submitTrackAAnswer,startTrackARepair,readTrackARepairTeach,beginTrackARepairChecks,readTrackARepairQuestion,submitTrackARepairAnswer,nextTrackARepairCheck,startTrackAVerification,readTrackAVerificationQuestion,submitTrackAVerificationAnswer,initializeTrackAMastery,startTrackAMasteryTask,readTrackAMasteryQuestion,submitTrackAMasteryAnswer,replaceTrackAMasteryTask,finalizeTrackAMastery,resumeTrackAPath,resumeTrackADiagnostic,saveAndExitTrackA,endTrackAPath,endTrackADiagnostic,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,requestPersistentStorage,acknowledgeRedundancyOverride,createNewLearnerRecord,resolveMirrorAhead,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore,trackAPriorInstruction,trackAPromptIsFresh,trackAActiveRecoverable,trackARouteForSkill,ensureTrackAMasterySchedule,masteryRouteInfo,maybeFinalizeTrackAMastery,sameOriginRedundancyDegraded}};
   init();
 })();
