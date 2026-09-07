@@ -12,9 +12,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Syntax check app
-        run: node --check app.js
+      - name: Syntax check app and review engine
+        run: |
+          node --check app.js
+          node --check review-engine.js
       - name: Run frozen-vocabulary and persistence regression
         run: node tests/audit-regression.test.mjs
       - name: Run Track B persistence slice D regression
         run: node tests/persistence-slice-d.test.mjs
+      - name: Run delayed-retrieval slice E regression
+        run: node tests/review-slice-e.test.mjs
