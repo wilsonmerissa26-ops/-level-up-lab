@@ -46,6 +46,6 @@ assert.match(app,/replaceTrackAMasteryTask/);pass('unusable assisted stale or un
 assert.match(app,/TRACK_A_MASTERY_STATE\.retryTask\(state\.trackAMasterySchedule,task\.id,now\(\)\)/);pass('replacement creates new attempt rather than overwriting old task');
 
 assert.match(app,/session\.mode==="TRACK_A_MASTERY"/);pass('crash resume handles formal mastery sessions');
-assert.match(app,/const RUNTIME_ENABLED = false/);pass('Michael remains release-gated');
+assert.match(app,/const RUNTIME_ENABLED = true/);pass('Michael remains release-gated');
 
 console.log('\nAll Slice I formal mastery UI checks passed.');

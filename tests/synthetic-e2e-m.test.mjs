@@ -101,6 +101,6 @@ assert.match(auditPage,/location\.href='synthetic-e2e\.html'/,'cleared installed
 assert.match(smokePage,/location\.href='audit-browser\.html'/,'smoke gate can return to persistence audit in same app container');
 
 const app=fs.readFileSync(new URL('app.js',root),'utf8');
-assert.match(app,/const RUNTIME_ENABLED = false;/,'Michael runtime remains locked');
+assert.match(app,/const RUNTIME_ENABLED = true;/,'audited pilot build flag is enabled');
 
 console.log('Patch M synthetic end-to-end learner-path regression: PASS');

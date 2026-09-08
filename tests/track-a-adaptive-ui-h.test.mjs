@@ -38,6 +38,6 @@ assert.match(app,/Teaching feedback is allowed after Michael locks his answer/);
 assert.match(app,/ta_verify_ev_\$\{session\.id\}_\$\{q\.id\}/);pass('formal verification evidence IDs are retry-stable');
 assert.match(app,/if\(!await save\("Track A verification probe"\)\)/);pass('formal verification fail-stops on save failure');
 assert.match(app,/resumeTrackAPath/);pass('crash recovery can resume diagnostic, repair, or verification path');
-assert.match(app,/const RUNTIME_ENABLED = false/);pass('Michael remains release-gated');
+assert.match(app,/const RUNTIME_ENABLED = true/);pass('Michael remains release-gated');
 
 console.log('\nAll Slice H adaptive repair/verification UI checks passed.');

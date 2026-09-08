@@ -9,6 +9,7 @@
   const TRACK_A_MASTERY = window.LEVEL_UP_TRACK_A_MASTERY;
   const STATE_INTEGRITY = window.LEVEL_UP_STATE_INTEGRITY;
   const STORAGE_DURABILITY = window.LEVEL_UP_STORAGE_DURABILITY;
+  const RUNTIME_GATE = window.LEVEL_UP_RUNTIME_GATE;
   const DB_NAME = "MichaelLevelUpLab";
   const DB_VERSION = 1;
   const STORE = "state";
@@ -17,8 +18,8 @@
   const BACKUP_KEY = "MLUL_BACKUP_V1";
   const ASSISTANCE_LEVELS = Object.freeze(["INDEPENDENT","CLARIFIED","HINTED","GUIDED","TAUGHT","PARENT_ASSISTED"]);
   const ACCESS_CONDITIONS = Object.freeze(["SELF_READ_SILENT","SELF_READ_ALOUD","SYSTEM_READ_ALOUD","ADULT_READ_ALOUD"]);
-  // Student runtime stays hard-disabled until the final local-persistence + synthetic-recovery audit is signed off.
-  const RUNTIME_ENABLED = false;
+  // Patch N: pilot runtime is enabled only through the audited Home Screen + PERSISTENT storage gate.
+  const RUNTIME_ENABLED = true;
   let dbHandle = null;
   let state = null;
   let current = null;
@@ -131,6 +132,15 @@
     alert("Same-origin redundancy is degraded. Open Backup to repair it or explicitly acknowledge degraded redundancy before collecting learner evidence.");
     return false;
   }
+
+  function runtimeGateStatus(){
+    const standalone=STORAGE_DURABILITY?STORAGE_DURABILITY.isStandaloneEnvironment(window):false;
+    if(!RUNTIME_GATE)return {allowed:false,reason:"BUILD_LOCKED"};
+    return RUNTIME_GATE.evaluate({buildEnabled:RUNTIME_ENABLED,standalone,persistenceState:persistenceStatus?.state||"UNKNOWN_OR_UNSUPPORTED"});
+  }
+  function studentRuntimeAllowed(){return !!runtimeGateStatus().allowed}
+  function runtimeBlockMessage(){const result=runtimeGateStatus();return RUNTIME_GATE?RUNTIME_GATE.message(result):"Student runtime gate is unavailable."}
+  function blockStudentRuntime(){alert(runtimeBlockMessage());return false}
 
   async function save(reason="update"){
     if(!state)return false;
@@ -313,7 +323,7 @@
   }
 
   async function resumeInterruptedSession(){
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. The preserved session will remain saved.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}
     const session=state.activeSession;
     if(!recoverableSession()){alert("There is no preserved session to resume.");return}
     const lesson=lessonById(session.lessonId);
@@ -344,7 +354,7 @@
   function recoveryNotice(){
     if(current || !recoverableSession())return "";
     const session=state.activeSession;const lesson=lessonById(session.lessonId);
-    return `<div class="notice" style="border-color:#0369a1;background:#082f49;color:#bae6fd"><strong>Session preserved.</strong> ${escapeHTML(lesson?.title||session.lessonId)} stopped before completion. Nothing was deleted. ${session.draft?.savedAt?`Last draft save: ${fmt(session.draft.savedAt)}.`:""}<div class="row" style="margin-top:10px"><button class="btn primary" ${RUNTIME_ENABLED?"":"disabled"} onclick="window.MLUL.resumeInterruptedSession()">Resume session</button><button class="btn" onclick="window.MLUL.endPreservedSession()">End session, keep evidence</button></div></div>`;
+    return `<div class="notice" style="border-color:#0369a1;background:#082f49;color:#bae6fd"><strong>Session preserved.</strong> ${escapeHTML(lesson?.title||session.lessonId)} stopped before completion. Nothing was deleted. ${session.draft?.savedAt?`Last draft save: ${fmt(session.draft.savedAt)}.`:""}<div class="row" style="margin-top:10px"><button class="btn primary" ${studentRuntimeAllowed()?"":"disabled"} onclick="window.MLUL.resumeInterruptedSession()">Resume session</button><button class="btn" onclick="window.MLUL.endPreservedSession()">End session, keep evidence</button></div></div>`;
   }
 
   function renderSaveStatus(){
@@ -400,7 +410,7 @@
         <div class="badges"><button class="btn" onclick="window.MLUL.manualSave()">Save</button><span id="saveStatus" class="badge"></span><span class="badge warn">Track B = PRIOR_INSTRUCTION</span></div>
       </div>
       <div class="notice"><strong>Evidence rule:</strong> Track B teaches Michael now. Every taught skill is permanently labeled <strong>PRIOR_INSTRUCTION</strong>. Raw responses and support conditions are stored separately from interpretation. Track A controlled diagnostics will never treat these skills as a clean cold baseline.</div>
-      ${RUNTIME_ENABLED?"":`<div class="notice" style="border-color:#b91c1c;background:#450a0a;color:#fecaca"><strong>BUILD UNDER AUDIT — STUDENT USE DISABLED.</strong> Michael cannot start lessons in this build. Frozen evidence enums are wired; the final local-persistence and synthetic-recovery audit must pass before runtime is enabled.</div>`}
+      ${studentRuntimeAllowed()?`<div class="notice" style="border-color:#15803d;background:#052e16;color:#bbf7d0"><strong>AUDITED PILOT READY.</strong> Student sessions are enabled in this installed Home Screen environment with persistent storage.</div>`:`<div class="notice" style="border-color:#b91c1c;background:#450a0a;color:#fecaca"><strong>PILOT ENVIRONMENT LOCK.</strong> ${escapeHTML(runtimeBlockMessage())}</div>`}
       ${recoveryNotice()}
       ${state?.backup?.pendingAfterLesson?`<div class="notice" style="border-color:#b45309;background:#451a03;color:#fde68a"><strong>Portable backup still pending.</strong> A lesson completed and the browser cannot confirm that an exported file was actually saved. ${state.backup.lastExportAttemptedAt?`An export was attempted ${fmt(state.backup.lastExportAttemptedAt)}, but the browser cannot confirm the file was actually saved.`:`No export attempt is recorded for this lesson yet.`}</div>`:""}
       <div class="nav">
@@ -434,14 +444,14 @@
   }
 
   function lessonCard(l,subject){
-    const st=lessonStatus(l.id);const prereqReady=isReady(l);const usable=RUNTIME_ENABLED && prereqReady;
-    const pill=!RUNTIME_ENABLED?`<span class="pill warn">Audit hold</span>`:st.status==="COMPLETED"?`<span class="pill good">Completed · ${st.score}%</span>`:prereqReady?`<span class="pill info">Ready</span>`:`<span class="pill warn">Prerequisite first</span>`;
-    return `<div class="lesson-card ${usable?"":"locked"}"><h3>${escapeHTML(l.title)}</h3><div class="row"><span class="pill purple">${escapeHTML(l.schoolTag)}</span><span class="pill">${l.minutes}</span>${pill}</div><div class="lesson-actions"><button class="btn ${st.status==="COMPLETED"?"good":"primary"}" ${usable?"":"disabled"} onclick="window.MLUL.startLesson('${l.id}','${subject}')">${!RUNTIME_ENABLED?"Student use disabled":st.status==="COMPLETED"?"Review lesson":"Start lesson"}</button></div></div>`
+    const st=lessonStatus(l.id);const prereqReady=isReady(l);const usable=studentRuntimeAllowed() && prereqReady;
+    const pill=!studentRuntimeAllowed()?`<span class="pill warn">Pilot gate</span>`:st.status==="COMPLETED"?`<span class="pill good">Completed · ${st.score}%</span>`:prereqReady?`<span class="pill info">Ready</span>`:`<span class="pill warn">Prerequisite first</span>`;
+    return `<div class="lesson-card ${usable?"":"locked"}"><h3>${escapeHTML(l.title)}</h3><div class="row"><span class="pill purple">${escapeHTML(l.schoolTag)}</span><span class="pill">${l.minutes}</span>${pill}</div><div class="lesson-actions"><button class="btn ${st.status==="COMPLETED"?"good":"primary"}" ${usable?"":"disabled"} onclick="window.MLUL.startLesson('${l.id}','${subject}')">${!studentRuntimeAllowed()?"Open audited app":st.status==="COMPLETED"?"Review lesson":"Start lesson"}</button></div></div>`
   }
 
   async function startLesson(id,subject){
     if(!evidenceSessionAllowed())return;
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not use it yet.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}
     const lesson=lessonById(id);if(!lesson)return;
     if(!isReady(lesson)){alert("Finish the prerequisite first.");return}
     const ok=await persistenceHealthCheck();renderSaveStatus();
@@ -563,7 +573,7 @@
 
   async function startReview(reviewId){
     if(!evidenceSessionAllowed())return;
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take reviews yet.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}
     if(recoverableSession()){alert("A session is already preserved. Resume it or end it before starting another review.");return}
     const review=reviewById(reviewId);if(!review){alert("Review not found.");return}
     if(!reviewIsDue(review)){alert("This review is not due yet or is already completed.");return}
@@ -638,7 +648,7 @@
   function reviewsView(){
     const rows=state.reviewSchedule.slice().sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).map(r=>{
       const l=lessonById(r.skillId);const due=new Date(r.dueAt);const dueNow=due<=new Date();const status=r.completed?`Completed · ${r.score}%`:dueNow?"Due now":"Scheduled";
-      const action=r.completed?"—":dueNow?`<button class="btn ${RUNTIME_ENABLED?"primary":""}" ${RUNTIME_ENABLED?"":"disabled"} onclick="window.MLUL.startReview('${r.id}')">${RUNTIME_ENABLED?"Start fresh review":"Audit hold"}</button>`:"Not due yet";
+      const action=r.completed?"—":dueNow?`<button class="btn ${studentRuntimeAllowed()?"primary":""}" ${studentRuntimeAllowed()?"":"disabled"} onclick="window.MLUL.startReview('${r.id}')">${studentRuntimeAllowed()?"Start fresh review":"Pilot gate"}</button>`:"Not due yet";
       return `<tr><td>${escapeHTML(l?.title||r.skillId)}</td><td>${r.window}</td><td>${due.toLocaleDateString()}</td><td>${status}</td><td>${r.evidence_class} / ${r.instruction_exposure_status}</td><td>${action}</td></tr>`
     }).join("")||`<tr><td colspan="6" class="muted">Complete a Track B lesson to create delayed reviews.</td></tr>`;
     return shell(`<div class="card"><h2>Delayed Retrieval Queue</h2><p class="muted">Immediate success is not mastery. Track B schedules Day 2, Day 7, and Day 21 retrieval checkpoints and generates fresh deterministic items for each window.</p><div class="tablewrap"><table><thead><tr><th>Skill</th><th>Window</th><th>Due</th><th>Status</th><th>Evidence label</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div><div class="callout small"><strong>Freshness rule:</strong> delayed reviews do not reuse the exact teaching prompts. Day 21 includes transfer evidence. Canonical mastery still belongs to Track A.</div></div>`)
@@ -746,13 +756,13 @@
     else if(route.type==="WAITING")return `<span class="pill info">${route.task?.dueAt?`${escapeHTML(masteryTaskLabel(route.task))} due ${new Date(route.task.dueAt).toLocaleDateString()}`:"Waiting for prior formal evidence"}</span>`;
     else if(route.type==="DONE")return `<span class="pill good">Lifecycle advanced</span>`;
     else return `<span class="pill warn">Route blocked</span>`;
-    const enabled=RUNTIME_ENABLED&&!state.activeSession&&!state.trackAActiveSession;
-    return `<button class="btn ${enabled?"primary":""}" ${enabled?"":"disabled"} onclick="${handler}">${RUNTIME_ENABLED?escapeHTML(label):`Audit hold · ${escapeHTML(label)}`}</button>`
+    const enabled=studentRuntimeAllowed()&&!state.activeSession&&!state.trackAActiveSession;
+    return `<button class="btn ${enabled?"primary":""}" ${enabled?"":"disabled"} onclick="${handler}">${studentRuntimeAllowed()?escapeHTML(label):`Pilot gate · ${escapeHTML(label)}`}</button>`
   }
 
   function trackAStatusRow(skill){
     const rec=trackASkillRecord(skill.id);const prior=trackAPriorInstruction(skill.id);const active=state.trackAActiveSession?.skillId===skill.id&&trackAActiveRecoverable();const route=trackARouteForSkill(skill.id);
-    const action=active?`<button class="btn ${RUNTIME_ENABLED?"primary":""}" ${RUNTIME_ENABLED?"":"disabled"} onclick="window.MLUL.resumeTrackAPath()">${RUNTIME_ENABLED?"Resume preserved path":"Audit hold"}</button>`:trackAAction(route);
+    const action=active?`<button class="btn ${studentRuntimeAllowed()?"primary":""}" ${studentRuntimeAllowed()?"":"disabled"} onclick="window.MLUL.resumeTrackAPath()">${studentRuntimeAllowed()?"Resume preserved path":"Pilot gate"}</button>`:trackAAction(route);
     const last=rec.lastMaintenance?.result||rec.lastMasteryCheck?.result||rec.lastVerification?.result||rec.lastRepair?.result||rec.lastDiagnostic?.result||"—";
     return `<tr><td>${escapeHTML(skill.title)}<div class="tiny muted">${escapeHTML(skill.id)}</div></td><td>${escapeHTML(rec.canonicalState||"UNKNOWN")}</td><td>${escapeHTML(rec.memoryStrength||"FRAGILE")}</td><td>${prior?"PRIOR_INSTRUCTION":"Cold baseline eligible if controlled"}</td><td>${escapeHTML(last)}</td><td>${action}</td></tr>`
   }
@@ -760,13 +770,13 @@
   function trackA(){
     if(!TRACK_A_ENGINE||!TRACK_A_DIAGNOSTIC)return shell(`<div class="card"><h2>Track A</h2><p class="warn">Track A engine is unavailable. Student use remains blocked.</p></div>`);
     const rows=TRACK_A_DIAGNOSTIC.SKILLS.map(trackAStatusRow).join("");
-    const active=trackAActiveRecoverable()?`<div class="notice" style="border-color:#0369a1;background:#082f49;color:#bae6fd"><strong>Adaptive path preserved.</strong> ${escapeHTML(TRACK_A_DIAGNOSTIC.skill(state.trackAActiveSession.skillId)?.title||state.trackAActiveSession.skillId)} stopped during ${escapeHTML(state.trackAActiveSession.mode||"Track A work")}. Submitted evidence remains saved. <div class="row" style="margin-top:10px"><button class="btn primary" ${RUNTIME_ENABLED?"":"disabled"} onclick="window.MLUL.resumeTrackAPath()">Resume</button><button class="btn" onclick="window.MLUL.endTrackAPath()">End this set, keep evidence</button></div></div>`:"";
-    return shell(`<div class="grid"><div class="card c8"><h2>Track A · Controlled Evidence</h2><p class="muted">Formal diagnostics use fresh, reliable probes and keep access support separate from instructional assistance. No answer feedback is given between probes.</p><div class="callout"><strong>State sequence:</strong> UNKNOWN → DIAGNOSTIC → GAP → LEARNING → PRACTICING → PROVISIONAL → MASTERED → EXTENDED</div></div><div class="card c4"><h3>3-probe rule</h3><p class="small">3/3 controlled → PROVISIONAL support. 2/3 → minimal correction + 2 fresh verification probes. 0–1/3 → trace downward to the first unstable prerequisite.</p></div><div class="card c12">${active}<h3>Math controlled diagnostic map</h3><div class="tablewrap"><table><thead><tr><th>Skill</th><th>Canonical state</th><th>Memory</th><th>Baseline</th><th>Last result</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div><div class="callout warn small" style="margin-top:14px"><strong>Release gate:</strong> this UI is implemented but student runtime stays disabled until the separate target-browser persistence audit passes.</div></div></div>`)
+    const active=trackAActiveRecoverable()?`<div class="notice" style="border-color:#0369a1;background:#082f49;color:#bae6fd"><strong>Adaptive path preserved.</strong> ${escapeHTML(TRACK_A_DIAGNOSTIC.skill(state.trackAActiveSession.skillId)?.title||state.trackAActiveSession.skillId)} stopped during ${escapeHTML(state.trackAActiveSession.mode||"Track A work")}. Submitted evidence remains saved. <div class="row" style="margin-top:10px"><button class="btn primary" ${studentRuntimeAllowed()?"":"disabled"} onclick="window.MLUL.resumeTrackAPath()">Resume</button><button class="btn" onclick="window.MLUL.endTrackAPath()">End this set, keep evidence</button></div></div>`:"";
+    return shell(`<div class="grid"><div class="card c8"><h2>Track A · Controlled Evidence</h2><p class="muted">Formal diagnostics use fresh, reliable probes and keep access support separate from instructional assistance. No answer feedback is given between probes.</p><div class="callout"><strong>State sequence:</strong> UNKNOWN → DIAGNOSTIC → GAP → LEARNING → PRACTICING → PROVISIONAL → MASTERED → EXTENDED</div></div><div class="card c4"><h3>3-probe rule</h3><p class="small">3/3 controlled → PROVISIONAL support. 2/3 → minimal correction + 2 fresh verification probes. 0–1/3 → trace downward to the first unstable prerequisite.</p></div><div class="card c12">${active}<h3>Math controlled diagnostic map</h3><div class="tablewrap"><table><thead><tr><th>Skill</th><th>Canonical state</th><th>Memory</th><th>Baseline</th><th>Last result</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div><div class="callout warn small" style="margin-top:14px"><strong>Release gate:</strong> student runtime is enabled only when the deterministic pilot gate confirms Home Screen / standalone plus PERSISTENT storage.</div></div></div>`)
   }
 
   async function startTrackADiagnostic(skillId){
     if(!evidenceSessionAllowed())return;
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take Track A diagnostics yet.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}
     if(!TRACK_A_ENGINE||!TRACK_A_DIAGNOSTIC){alert("Track A engine is not loaded.");return}
     if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session before starting a Track A diagnostic.");return}
     const skill=TRACK_A_DIAGNOSTIC.skill(skillId);if(!skill)return;
@@ -819,7 +829,7 @@
   }
 
   async function resumeTrackAPath(){
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. The preserved path remains saved.");return}if(!trackAActiveRecoverable())return;const session=state.trackAActiveSession;session.status="ACTIVE";session.resumedAt=now();state.trackAActiveSession=session;if(!await save("resume Track A path"))return;currentTrackA={session,skill:TRACK_A_DIAGNOSTIC.skill(session.skillId)};
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}if(!trackAActiveRecoverable())return;const session=state.trackAActiveSession;session.status="ACTIVE";session.resumedAt=now();state.trackAActiveSession=session;if(!await save("resume Track A path"))return;currentTrackA={session,skill:TRACK_A_DIAGNOSTIC.skill(session.skillId)};
     if(session.mode==="TRACK_A_REPAIR"){if(session.phase==="TEACH")renderTrackARepairTeach();else if(session.itemIndex>=session.items.length)await finishTrackARepair();else renderTrackARepairCheck();return}
     if(session.mode==="TRACK_A_VERIFICATION"){if(session.itemIndex>=session.items.length)await finishTrackAVerification();else renderTrackAVerificationQuestion();return}
     if(session.mode==="TRACK_A_MASTERY"){if(session.itemIndex>=session.items.length)await finishTrackAMasteryTask();else renderTrackAMasteryQuestion();return}
@@ -840,7 +850,7 @@
 
   async function startTrackARepair(skillId){
     if(!evidenceSessionAllowed())return;
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not start repair yet.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}
     if(!TRACK_A_REMEDIATION||!TRACK_A_ENGINE){alert("Track A remediation module is unavailable.");return}
     if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}
     const route=trackARouteForSkill(skillId);if(!["REPAIR","MASTERY_REPAIR","MAINTENANCE_REPAIR"].includes(route.type)||route.skillId!==skillId){alert("The adaptive route requires a different prerequisite step first.");return}
@@ -894,7 +904,7 @@
 
   async function startTrackAVerification(skillId){
     if(!evidenceSessionAllowed())return;
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take verification yet.");return}if(!TRACK_A_VERIFICATION||!TRACK_A_ENGINE){alert("Track A verification module is unavailable.");return}if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}const rec=trackASkillRecord(skillId);if(rec.canonicalState!=="PRACTICING"){alert("Formal verification requires the skill to be in PRACTICING.");return}if(rec.lastRepair?.result!=="COMPONENT_VERIFIED"){alert("The smallest corrected component must be explicitly verified before formal verification.");return}const ok=await persistenceHealthCheck();renderSaveStatus();if(!ok){alert("The app cannot verify persistence, so formal verification will not start.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}if(!TRACK_A_VERIFICATION||!TRACK_A_ENGINE){alert("Track A verification module is unavailable.");return}if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}const rec=trackASkillRecord(skillId);if(rec.canonicalState!=="PRACTICING"){alert("Formal verification requires the skill to be in PRACTICING.");return}if(rec.lastRepair?.result!=="COMPONENT_VERIFIED"){alert("The smallest corrected component must be explicitly verified before formal verification.");return}const ok=await persistenceHealthCheck();renderSaveStatus();if(!ok){alert("The app cannot verify persistence, so formal verification will not start.");return}
     const id=`ta_verify_${Date.now()}_${skillId.replace(/[^A-Z0-9]/gi,"_")}`;const excluded=state.evidence.filter(e=>e.track==="A"&&e.skillId===skillId&&e.prompt_fingerprint).map(e=>e.prompt_fingerprint);const items=TRACK_A_VERIFICATION.generateVerification(skillId,id,excluded);const session={id,mode:"TRACK_A_VERIFICATION",track:"A",subject:"Math",skillId,startedAt:now(),phase:"VERIFICATION",itemIndex:0,items,responses:[],status:"ACTIVE"};state.trackAActiveSession=session;if(!await save("start Track A two-probe verification"))return;currentTrackA={session,skill:TRACK_A_DIAGNOSTIC.skill(skillId)};renderTrackAVerificationQuestion();
   }
 
@@ -931,7 +941,7 @@
 
   async function startTrackAMasteryTask(taskId){
     if(!evidenceSessionAllowed())return;
-    if(!RUNTIME_ENABLED){alert("Student use is disabled while this build is under audit. Michael should not take formal retrieval yet.");return}
+    if(!studentRuntimeAllowed()){blockStudentRuntime();return}
     if(!TRACK_A_MASTERY||!TRACK_A_MASTERY_STATE||!TRACK_A_ENGINE){alert("Formal mastery modules are unavailable.");return}
     if(state.activeSession||state.trackAActiveSession){alert("Finish, resume, or end the preserved session first.");return}
     const task=TRACK_A_MASTERY_STATE.taskById(state.trackAMasterySchedule,taskId);if(!task||task.status!=="SCHEDULED"){alert("This formal task is not available to start.");return}
@@ -1135,6 +1145,6 @@
     render();
   }
 
-  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,startTrackADiagnostic,readTrackAQuestion,submitTrackAAnswer,startTrackARepair,readTrackARepairTeach,beginTrackARepairChecks,readTrackARepairQuestion,submitTrackARepairAnswer,nextTrackARepairCheck,startTrackAVerification,readTrackAVerificationQuestion,submitTrackAVerificationAnswer,initializeTrackAMastery,startTrackAMasteryTask,readTrackAMasteryQuestion,submitTrackAMasteryAnswer,replaceTrackAMasteryTask,finalizeTrackAMastery,resumeTrackAPath,resumeTrackADiagnostic,saveAndExitTrackA,endTrackAPath,endTrackADiagnostic,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,requestPersistentStorage,acknowledgeRedundancyOverride,createNewLearnerRecord,resolveMirrorAhead,restoreMirrorAsAuthoritative,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore,trackAPriorInstruction,trackAPromptIsFresh,trackAActiveRecoverable,trackARouteForSkill,ensureTrackAMasterySchedule,masteryRouteInfo,maybeFinalizeTrackAMastery,sameOriginRedundancyDegraded}};
+  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,startTrackADiagnostic,readTrackAQuestion,submitTrackAAnswer,startTrackARepair,readTrackARepairTeach,beginTrackARepairChecks,readTrackARepairQuestion,submitTrackARepairAnswer,nextTrackARepairCheck,startTrackAVerification,readTrackAVerificationQuestion,submitTrackAVerificationAnswer,initializeTrackAMastery,startTrackAMasteryTask,readTrackAMasteryQuestion,submitTrackAMasteryAnswer,replaceTrackAMasteryTask,finalizeTrackAMastery,resumeTrackAPath,resumeTrackADiagnostic,saveAndExitTrackA,endTrackAPath,endTrackADiagnostic,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,requestPersistentStorage,acknowledgeRedundancyOverride,createNewLearnerRecord,resolveMirrorAhead,restoreMirrorAsAuthoritative,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore,trackAPriorInstruction,trackAPromptIsFresh,trackAActiveRecoverable,trackARouteForSkill,ensureTrackAMasterySchedule,masteryRouteInfo,maybeFinalizeTrackAMastery,sameOriginRedundancyDegraded,runtimeGateStatus,studentRuntimeAllowed,runtimeBlockMessage}};
   init();
 })();

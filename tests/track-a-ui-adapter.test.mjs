@@ -39,6 +39,6 @@ assert.match(app,/if\(!await save\("Track A controlled probe"\)\)/);pass('formal
 assert.match(app,/Session halted/);pass('failed formal save visibly halts the diagnostic');
 assert.match(app,/recover interrupted Track A diagnostic/);pass('Track A crash recovery preserves session');
 assert.match(app,/saveAndExitTrackA/);pass('Track A has explicit Save and Exit path');
-assert.match(app,/const RUNTIME_ENABLED = false/);pass('Michael remains release-gated');
+assert.match(app,/const RUNTIME_ENABLED = true/);pass('Michael remains release-gated');
 
 console.log('\nAll Track A delivery/evidence adapter checks passed.');

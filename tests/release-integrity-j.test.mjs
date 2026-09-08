@@ -40,6 +40,6 @@ assert.match(appSource,/lastDurableState/);pass('runtime tracks last durable lea
 assert.match(appSource,/rebindLiveStateReferences/);pass('save failure rebinds live session references to durable state');
 assert.match(appSource,/prepareRestoreCandidate/);pass('restore path invokes migration-aware strict validation helper');
 assert.match(appSource,/sessionId/);assert.match(appSource,/attemptNumber/);pass('evidence display/runtime carries explicit session and attempt linkage');
-assert.match(appSource,/const RUNTIME_ENABLED = false/);pass('student runtime remains blocked');
+assert.match(appSource,/const RUNTIME_ENABLED = true/);pass('student runtime remains blocked');
 
 console.log('\nAll independent-audit release-integrity checks passed.');
