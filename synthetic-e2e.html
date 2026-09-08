@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Level-Up Smoke" />
+  <title>Level-Up Synthetic Learner Smoke Test</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <h1>Level-Up Synthetic Learner Smoke Test</h1>
+      <div class="callout green"><strong>Safe synthetic learner only.</strong><p class="small">This page uses a separate IndexedDB database and separate localStorage keys. It never reads or writes Michael's learner record.</p></div>
+      <p class="tiny muted">Synthetic database: <code>MichaelLevelUpLab_SYNTHETIC_E2E</code></p>
+    </div>
+
+    <div class="card">
+      <h2>Environment</h2>
+      <div id="environment" class="small muted">Checking…</div>
+    </div>
+
+    <div class="card">
+      <h2>Run smoke test</h2>
+      <p class="small muted">This test intentionally reloads the page to prove an ACTIVE learner session survives. After the reload, you must explicitly tap Continue before the synthetic learner can resume and finish.</p>
+      <div class="row">
+        <button id="runBtn" class="btn primary">Run synthetic learner smoke test</button>
+        <button id="continueBtn" class="btn primary" style="display:none">Continue preserved synthetic session</button>
+        <button id="resetBtn" class="btn">Reset synthetic smoke storage</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Results</h2>
+      <div id="summary" class="muted">No smoke test run yet.</div>
+      <div id="results"></div>
+    </div>
+  </div>
+
+  <script src="content.js"></script>
+  <script src="review-engine.js"></script>
+  <script src="track-a-engine.js"></script>
+  <script src="track-a-diagnostic.js"></script>
+  <script src="storage-durability.js"></script>
+  <script src="state-integrity.js"></script>
+  <script src="synthetic-e2e-core.js"></script>
+  <script src="synthetic-e2e.js"></script>
+</body>
+</html>
