@@ -51,10 +51,15 @@
       const mirror=readMirror();
       if(JSON.stringify(mirror)!==JSON.stringify(candidate))throw new Error('synthetic mirror readback mismatch');
       lastDurableRevision=revision;
-      return clone(candidate);
+      return {revision,updatedAt:candidate.updatedAt};
     });
     writeSequence=task;
-    return task;
+    const result=await task;
+    // Match production save semantics: persist an immutable snapshot, but keep the live
+    // learner object/session references intact so later mutations cannot target stale clones.
+    state.stateRevision=result.revision;
+    state.updatedAt=result.updatedAt;
+    return state;
   }
 
   async function refreshEnvironment(){

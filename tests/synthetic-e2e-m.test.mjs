@@ -41,10 +41,12 @@ assert.equal(checks.length,3);
 assert.ok(checks.every(e=>e.isCorrect===true));
 assert.ok(checks.every(e=>e.rawResponse));
 assert.ok(checks.every(e=>e.sessionId===session.id&&e.attemptNumber===1));
+assert.equal(state.activeSession.responses.length,4,'live active session retains teaching + practice responses before persistence');
 
 // Simulate browser reload by serializing and reloading the learner record.
 state=JSON.parse(JSON.stringify(state));
 assert.equal(state.activeSession.status,'ACTIVE');
+assert.equal(state.activeSession.responses.filter(x=>x.interaction_purpose==='PRACTICE').length,3,'persisted active session keeps all practice responses');
 state.activeSession.status='INTERRUPTED_PRESERVED';
 CORE.upsertSession(state,state.activeSession);
 assert.equal(state.activeSession.status,'INTERRUPTED_PRESERVED');
@@ -89,6 +91,8 @@ assert.match(harness,/VERIFY_INTERRUPT/);
 assert.match(harness,/AWAIT_EXPLICIT_RESUME/);
 assert.match(harness,/VERIFY_FINAL/);
 assert.match(harness,/location\.reload\(\)/);
+assert.match(harness,/state\.stateRevision=result\.revision;/,'smoke save writes durable revision back onto the live state');
+assert.doesNotMatch(harness,/return clone\(candidate\)/,'smoke save must not replace the live learner object with a detached clone');
 assert.doesNotMatch(harness,/MichaelLevelUpLab['"]/,'synthetic harness must not target Michael production DB');
 
 const auditPage=fs.readFileSync(new URL('audit-browser.html',root),'utf8');
