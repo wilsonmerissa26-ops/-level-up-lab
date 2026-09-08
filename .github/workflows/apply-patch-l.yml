@@ -1,0 +1,55 @@
+name: Apply Patch L Primary Missing Decision
+
+on:
+  push:
+    paths:
+      - scripts/apply-patch-l.py
+      - .github/workflows/apply-patch-l.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply Patch L
+        run: python3 scripts/apply-patch-l.py
+      - name: Syntax checks
+        run: |
+          node --check app.js
+          node --check audit-browser.js
+          node --check tests/primary-missing-recovery-l.test.mjs
+      - name: Full D-through-L regression suite
+        run: |
+          node tests/audit-regression.test.mjs
+          node tests/persistence-slice-d.test.mjs
+          node tests/review-slice-e.test.mjs
+          node tests/track-a-engine.test.mjs
+          node tests/track-a-diagnostic.test.mjs
+          node tests/track-a-ui-adapter.test.mjs
+          node tests/track-a-paths-h.test.mjs
+          node tests/track-a-adaptive-ui-h.test.mjs
+          node tests/track-a-mastery-i.test.mjs
+          node tests/track-a-mastery-state-i.test.mjs
+          node tests/track-a-mastery-ui-i.test.mjs
+          node tests/release-integrity-j.test.mjs
+          node tests/storage-durability-k.test.mjs
+          node tests/revision-integrity-k.test.mjs
+          node tests/patch-k-ui-integration.test.mjs
+          node tests/primary-missing-recovery-l.test.mjs
+      - name: Commit Patch L integration
+        run: |
+          git config user.name "level-up-build-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.js audit-browser.js
+          if git diff --cached --quiet; then
+            echo "No generated Patch L changes to commit"
+          else
+            git commit -m "Implement Patch L primary-missing recovery decision"
+            git push
+          fi
