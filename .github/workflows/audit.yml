@@ -25,6 +25,8 @@ jobs:
           node --check track-a-mastery-state.js
           node --check track-a-mastery.js
           node --check audit-browser.js
+          node --check synthetic-e2e-core.js
+          node --check synthetic-e2e.js
       - name: Run frozen-vocabulary and persistence regression
         run: node tests/audit-regression.test.mjs
       - name: Run Track B persistence slice D regression
@@ -57,3 +59,5 @@ jobs:
         run: node tests/patch-k-ui-integration.test.mjs
       - name: Run Patch L primary-missing recovery decision regression
         run: node tests/primary-missing-recovery-l.test.mjs
+      - name: Run Patch M synthetic learner-path regression
+        run: node tests/synthetic-e2e-m.test.mjs
