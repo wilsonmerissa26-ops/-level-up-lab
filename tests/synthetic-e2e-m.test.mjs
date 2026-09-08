@@ -91,6 +91,11 @@ assert.match(harness,/VERIFY_FINAL/);
 assert.match(harness,/location\.reload\(\)/);
 assert.doesNotMatch(harness,/MichaelLevelUpLab['"]/,'synthetic harness must not target Michael production DB');
 
+const auditPage=fs.readFileSync(new URL('audit-browser.html',root),'utf8');
+const smokePage=fs.readFileSync(new URL('synthetic-e2e.html',root),'utf8');
+assert.match(auditPage,/location\.href='synthetic-e2e\.html'/,'cleared installed audit app links directly to smoke gate');
+assert.match(smokePage,/location\.href='audit-browser\.html'/,'smoke gate can return to persistence audit in same app container');
+
 const app=fs.readFileSync(new URL('app.js',root),'utf8');
 assert.match(app,/const RUNTIME_ENABLED = false;/,'Michael runtime remains locked');
 
