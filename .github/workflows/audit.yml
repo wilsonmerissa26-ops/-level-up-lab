@@ -16,6 +16,7 @@ jobs:
         run: |
           node --check app.js
           node --check storage-durability.js
+          node --check runtime-gate.js
           node --check state-integrity.js
           node --check review-engine.js
           node --check track-a-engine.js
@@ -61,3 +62,5 @@ jobs:
         run: node tests/primary-missing-recovery-l.test.mjs
       - name: Run Patch M synthetic learner-path regression
         run: node tests/synthetic-e2e-m.test.mjs
+      - name: Run Patch N audited iPad pilot runtime gate
+        run: node tests/runtime-gate-n.test.mjs
