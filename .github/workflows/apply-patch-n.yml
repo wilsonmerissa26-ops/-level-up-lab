@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   apply:
+    if: "${{ github.event.head_commit.message == 'Patch N: trigger final apply' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,9 +50,9 @@ jobs:
           node tests/primary-missing-recovery-l.test.mjs
           node tests/synthetic-e2e-m.test.mjs
           node tests/runtime-gate-n.test.mjs
-      - name: Commit Patch N and remove temporary apply artifacts
+      - name: Commit Patch N application
         run: |
-          rm -f scripts/apply-patch-n.py .github/workflows/apply-patch-n.yml
+          rm -f scripts/apply-patch-n.py
           git config user.name "wilsonmerissa26-ops"
           git config user.email "wilsonmerissa26@gmail.com"
           git add -A
