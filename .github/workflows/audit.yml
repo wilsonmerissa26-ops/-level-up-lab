@@ -55,3 +55,5 @@ jobs:
         run: node tests/revision-integrity-k.test.mjs
       - name: Run Patch K app and browser integration regression
         run: node tests/patch-k-ui-integration.test.mjs
+      - name: Run Patch L primary-missing recovery decision regression
+        run: node tests/primary-missing-recovery-l.test.mjs
