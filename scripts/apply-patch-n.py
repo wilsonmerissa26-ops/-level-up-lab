@@ -89,14 +89,15 @@ audit_path.write_text(audit.replace(anchor,replacement,1))
 # Existing release assertions move from hard lock to audited pilot build flag.
 for path in (root/'tests').glob('*.test.mjs'):
     text=path.read_text()
-    if 'const RUNTIME_ENABLED = false;' in text:
-        text=text.replace('const RUNTIME_ENABLED = false;','const RUNTIME_ENABLED = true;')
+    if 'RUNTIME_ENABLED = false' in text:
+        text=text.replace('RUNTIME_ENABLED = false','RUNTIME_ENABLED = true')
         text=text.replace('student runtime remains audit-blocked','audited pilot build flag is enabled')
         text=text.replace('Michael runtime remains locked','audited pilot build flag is enabled')
+        text=text.replace('runtime stays disabled','runtime is gated to the audited Home Screen environment')
         path.write_text(text)
 
 for path in (root/'tests').glob('*.test.mjs'):
-    assert 'const RUNTIME_ENABLED = false;' not in path.read_text(), f'stale runtime-lock assertion: {path}'
+    assert 'RUNTIME_ENABLED = false' not in path.read_text(), f'stale runtime-lock assertion: {path}'
 
 # Permanent CI owns the new gate module and behavior test.
 audit_yml=root/'.github/workflows/audit.yml'
