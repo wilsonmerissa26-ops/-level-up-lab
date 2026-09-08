@@ -38,6 +38,11 @@
     <p class="warn">The two reload tests intentionally reload this audit page. That is expected.</p>
   </div>
   <div class="card">
+    <h2>Next release gate</h2>
+    <p class="muted">After this environment passes the persistence audit, continue to the isolated synthetic learner-path smoke test in this same installed web-app container.</p>
+    <button id="smokeBtn" onclick="location.href='synthetic-e2e.html'">Open synthetic learner smoke test</button>
+  </div>
+  <div class="card">
     <h2>Results</h2>
     <div id="summary" class="muted">No tests run yet.</div>
     <div id="results"></div>
