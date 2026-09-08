@@ -68,7 +68,7 @@
     const disk=await get(STATE_KEY);const backup=readBackup();
     if(valid(disk)&&valid(backup))return {kind:'RECORD',source:'disk',state:disk,comparison:compare(disk,backup)};
     if(valid(disk))return {kind:'RECORD',source:'disk',state:disk,comparison:'MIRROR_STALE'};
-    if(valid(backup))return {kind:'RECORD',source:'backup',state:backup,comparison:'PRIMARY_MISSING'};
+    if(valid(backup))return {kind:'PRIMARY_MISSING_DECISION_REQUIRED',source:'backup',state:backup,comparison:'PRIMARY_MISSING'};
     return {kind:'FIRST_RUN_DECISION_REQUIRED',source:null,state:null,comparison:'NONE'};
   }
 

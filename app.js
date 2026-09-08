@@ -1009,6 +1009,14 @@
     return `<div class="shell"><div class="card"><h2>Storage integrity decision required</h2><p class="muted">The localStorage mirror has a higher revision than authoritative IndexedDB. Level-Up will not guess which history to keep.</p><div class="callout warn"><strong>Primary revision:</strong> ${escapeHTML(STATE_INTEGRITY.revisionOf(issue?.rawPrimary)??"pre-revision")} · <strong>Mirror revision:</strong> ${escapeHTML(STATE_INTEGRITY.revisionOf(issue?.rawMirror)??"pre-revision")}</div><div class="row"><button class="btn primary" onclick="window.MLUL.resolveMirrorAhead('MIRROR')">Use newer mirror</button><button class="btn" onclick="window.MLUL.resolveMirrorAhead('PRIMARY')">Keep primary record</button></div></div></div>`;
   }
 
+  function primaryMissingView(){
+    const issue=storageRecoveryIssue;
+    const learner=issue?.mirror?.student||issue?.rawMirror?.student||{};
+    const revision=STATE_INTEGRITY.revisionOf(issue?.rawMirror||issue?.mirror);
+    const updatedAt=issue?.mirror?.updatedAt||issue?.rawMirror?.updatedAt||null;
+    return `<div class="shell"><div class="card"><h2>Primary learner record unavailable</h2><p class="muted">IndexedDB, the authoritative learner record, is unavailable. A same-origin localStorage mirror is available, but Level-Up will not promote it without your decision.</p><div class="callout"><strong>Learner:</strong> ${escapeHTML(learner.name||learner.id||"Unknown learner")} ${learner.grade?`· Grade ${escapeHTML(learner.grade)}`:""}${learner.school?` · ${escapeHTML(learner.school)}`:""}<br><strong>Mirror revision:</strong> ${escapeHTML(revision??"pre-revision")}<br><strong>Mirror updatedAt:</strong> ${escapeHTML(updatedAt?fmt(updatedAt):"not recorded")} <span class="tiny muted">(informational metadata only)</span></div><div class="callout warn"><strong>Recovery warning:</strong> Restoring this mirror may return the learner to an earlier saved state if the missing primary contained newer changes.</div><input type="file" id="importFile" accept="application/json,.json"><div class="spacer"></div><div class="row"><button class="btn primary" onclick="window.MLUL.restoreMirrorAsAuthoritative()">Restore this backup</button><button class="btn" onclick="window.MLUL.importBackup()">Import a JSON backup instead</button></div></div></div>`;
+  }
+
   async function createNewLearnerRecord(){
     const hadPrior=!!storageRecoveryIssue;
     state=normalizeStateShape(freshState());
@@ -1033,6 +1041,21 @@
     }
     const previousIssue=storageRecoveryIssue;storageRecoveryIssue=null;backupMirrorHealthy=false;redundancyComparison="MIRROR_AHEAD";
     if(!await save("resolve mirror ahead")){storageRecoveryIssue=previousIssue;return}
+    render();
+  }
+
+  async function restoreMirrorAsAuthoritative(){
+    const issue=storageRecoveryIssue;if(!issue||issue.type!=="PRIMARY_MISSING_MIRROR_PRESENT")return;
+    const observed=[issue.rawPrimary,issue.rawMirror,issue.mirror];
+    const previousIssue=storageRecoveryIssue;
+    const previousState=state;
+    const previousRevision=lastDurableRevision;
+    lastDurableRevision=STATE_INTEGRITY.maxObservedRevision(observed);
+    state=normalizeStateShape(STATE_INTEGRITY.prepareRestoreCandidate(issue.rawMirror||issue.mirror,{source:"MIRROR",now:now(),observedRevisions:observed}));
+    storageRecoveryIssue=null;backupMirrorHealthy=false;redundancyComparison="MIRROR_STALE";
+    if(!await save("restore offered mirror after primary missing")){
+      state=previousState;lastDurableRevision=previousRevision;storageRecoveryIssue=previousIssue;backupMirrorHealthy=false;redundancyComparison="MIRROR_STALE";return;
+    }
     render();
   }
 
@@ -1062,6 +1085,7 @@
     if(current)return;
     if(firstRunDecisionRequired){document.getElementById("app").innerHTML=firstRunView();return}
     if(storageRecoveryIssue?.type==="MIRROR_AHEAD"){document.getElementById("app").innerHTML=mirrorAheadView();return}
+    if(storageRecoveryIssue?.type==="PRIMARY_MISSING_MIRROR_PRESENT"){document.getElementById("app").innerHTML=primaryMissingView();return}
     const route=getRoute();const view={dashboard, "track-b":trackB,parent:parentView,evidence:evidenceView,reviews:reviewsView,"track-a":trackA,backup:backupView}[route]||dashboard;
     document.getElementById("app").innerHTML=view();renderSaveStatus();if(route==="backup")checkPersistenceUI();
   }
@@ -1088,10 +1112,10 @@
         if(STATE_INTEGRITY.revisionOf(rawDisk)==null){backupMirrorHealthy=false;redundancyComparison="UNKNOWN_PRE_REVISION";if(!await save("bootstrap primary revision"))throw new Error("Could not bootstrap primary revision.")}
         else{backupMirrorHealthy=mirrorWriteAndReadback(state);redundancyComparison=backupMirrorHealthy?"IN_SYNC":"MIRROR_STALE"}
       }else if(mirror){
-        const observed=[rawDisk,rawMirror,mirror];lastDurableRevision=STATE_INTEGRITY.maxObservedRevision(observed);
-        state=normalizeStateShape(STATE_INTEGRITY.prepareRestoreCandidate(rawMirror||mirror,{source:"MIRROR",now:now(),observedRevisions:observed}));
+        const observed=[rawDisk,rawMirror,mirror];
+        lastDurableRevision=STATE_INTEGRITY.maxObservedRevision(observed);
+        storageRecoveryIssue={type:"PRIMARY_MISSING_MIRROR_PRESENT",mirror,rawMirror,rawPrimary:rawDisk};
         backupMirrorHealthy=false;redundancyComparison="MIRROR_STALE";saveHealthy=true;
-        if(!await save("restore mirror to primary"))throw new Error("Could not restore mirror to IndexedDB.");
       }else{
         state=normalizeStateShape(freshState());firstRunDecisionRequired=true;saveHealthy=true;backupMirrorHealthy=false;redundancyComparison="UNVERIFIED";
         if(rawDisk||rawMirror)storageRecoveryIssue={type:"NO_VALID_RECORD",rawPrimary:rawDisk,rawMirror};
@@ -1111,6 +1135,6 @@
     render();
   }
 
-  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,startTrackADiagnostic,readTrackAQuestion,submitTrackAAnswer,startTrackARepair,readTrackARepairTeach,beginTrackARepairChecks,readTrackARepairQuestion,submitTrackARepairAnswer,nextTrackARepairCheck,startTrackAVerification,readTrackAVerificationQuestion,submitTrackAVerificationAnswer,initializeTrackAMastery,startTrackAMasteryTask,readTrackAMasteryQuestion,submitTrackAMasteryAnswer,replaceTrackAMasteryTask,finalizeTrackAMastery,resumeTrackAPath,resumeTrackADiagnostic,saveAndExitTrackA,endTrackAPath,endTrackADiagnostic,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,requestPersistentStorage,acknowledgeRedundancyOverride,createNewLearnerRecord,resolveMirrorAhead,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore,trackAPriorInstruction,trackAPromptIsFresh,trackAActiveRecoverable,trackARouteForSkill,ensureTrackAMasterySchedule,masteryRouteInfo,maybeFinalizeTrackAMastery,sameOriginRedundancyDegraded}};
+  window.MLUL={startLesson,readTeach,beginChecks,readQuestion,submitAnswer,nextQuestion,startReview,readReviewQuestion,submitReviewAnswer,startTrackADiagnostic,readTrackAQuestion,submitTrackAAnswer,startTrackARepair,readTrackARepairTeach,beginTrackARepairChecks,readTrackARepairQuestion,submitTrackARepairAnswer,nextTrackARepairCheck,startTrackAVerification,readTrackAVerificationQuestion,submitTrackAVerificationAnswer,initializeTrackAMastery,startTrackAMasteryTask,readTrackAMasteryQuestion,submitTrackAMasteryAnswer,replaceTrackAMasteryTask,finalizeTrackAMastery,resumeTrackAPath,resumeTrackADiagnostic,saveAndExitTrackA,endTrackAPath,endTrackADiagnostic,manualSave,saveAndExit,resumeInterruptedSession,endPreservedSession,exportBackup,importBackup,checkPersistenceUI,requestPersistentStorage,acknowledgeRedundancyOverride,createNewLearnerRecord,resolveMirrorAhead,restoreMirrorAsAuthoritative,markAccessObserved,__audit:{RUNTIME_ENABLED,STATE_KEY,PROBE_KEY,ASSISTANCE_LEVELS,ACCESS_CONDITIONS,isValidLearnerState,assistanceLevelForSession,validAccessCondition,accessSourceFor,recoverableSession,captureDraftFromUI,upsertSessionRecord,answersMatch,memoryStrengthForReview,reviewOutcomeFromScore,trackAPriorInstruction,trackAPromptIsFresh,trackAActiveRecoverable,trackARouteForSkill,ensureTrackAMasterySchedule,masteryRouteInfo,maybeFinalizeTrackAMastery,sameOriginRedundancyDegraded}};
   init();
 })();
