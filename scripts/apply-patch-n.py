@@ -99,15 +99,6 @@ for path in (root/'tests').glob('*.test.mjs'):
 for path in (root/'tests').glob('*.test.mjs'):
     assert 'RUNTIME_ENABLED = false' not in path.read_text(), f'stale runtime-lock assertion: {path}'
 
-# Permanent CI owns the new gate module and behavior test.
-audit_yml=root/'.github/workflows/audit.yml'
-yml=audit_yml.read_text()
-anchor='          node --check storage-durability.js\n'
-assert anchor in yml and 'node --check runtime-gate.js' not in yml
-yml=yml.replace(anchor,anchor+'          node --check runtime-gate.js\n',1)
-anchor='      - name: Run Patch M synthetic learner-path regression\n        run: node tests/synthetic-e2e-m.test.mjs\n'
-assert anchor in yml and 'runtime-gate-n.test.mjs' not in yml
-yml=yml.replace(anchor,anchor+'      - name: Run Patch N audited iPad pilot runtime gate\n        run: node tests/runtime-gate-n.test.mjs\n',1)
-audit_yml.write_text(yml)
-
+# Permanent audit.yml is updated separately through the GitHub connector because the
+# Actions token intentionally has no workflow-file write permission.
 print('Patch N source transformations applied successfully.')
