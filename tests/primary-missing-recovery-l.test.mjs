@@ -7,13 +7,17 @@ const stateIntegritySource = fs.readFileSync('state-integrity.js','utf8');
 let appSource = fs.readFileSync('app.js','utf8');
 
 // Test-only instrumentation: execute the real init()/restore code while counting save()
-// calls and exposing the in-memory recovery issue. No source-text assertions are used.
+// calls and exposing the in-memory recovery issue. No source-text behavior assertions are used.
 const saveAnchor='  async function save(reason="update"){\n';
 assert.ok(appSource.includes(saveAnchor),'save anchor missing');
 appSource=appSource.replace(saveAnchor,saveAnchor+'    globalThis.__patchLSaveCalls=(globalThis.__patchLSaveCalls||0)+1;\n');
-const auditAnchor='sameOriginRedundancyDegraded}};';
-assert.ok(appSource.includes(auditAnchor),'audit export anchor missing');
-appSource=appSource.replace(auditAnchor,'sameOriginRedundancyDegraded,getStorageRecoveryIssue:()=>storageRecoveryIssue}};');
+// Insert the audit getter immediately after the stable helper name. This remains valid when
+// later release patches append additional __audit helpers after sameOriginRedundancyDegraded.
+const auditMarker='sameOriginRedundancyDegraded';
+const auditIndex=appSource.lastIndexOf(auditMarker);
+assert.ok(auditIndex>=0,'audit export anchor missing');
+const auditInsertAt=auditIndex+auditMarker.length;
+appSource=appSource.slice(0,auditInsertAt)+',getStorageRecoveryIssue:()=>storageRecoveryIssue'+appSource.slice(auditInsertAt);
 
 const mirror={
   schemaVersion:2,
@@ -116,6 +120,7 @@ const sandbox={
   LEVEL_UP_TRACK_A_VERIFICATION:null,
   LEVEL_UP_TRACK_A_MASTERY_STATE:null,
   LEVEL_UP_TRACK_A_MASTERY:null,
+  LEVEL_UP_RUNTIME_GATE:null,
   LEVEL_UP_STORAGE_DURABILITY:{
     async getPersistenceStatus(){return {state:'BEST_EFFORT',supported:true,canRequest:true,checked:true,error:null}},
     async requestPersistentStorage(){return {state:'BEST_EFFORT',supported:true,canRequest:true,checked:true,error:null}},

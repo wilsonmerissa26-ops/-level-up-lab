@@ -37,7 +37,7 @@ assert.doesNotMatch(source, /accessSupports:/); pass('legacy accessSupports remo
 assert.doesNotMatch(source, /independent:false/); pass('boolean independence write removed');
 assert.doesNotMatch(source, /skillStateFromScore/); pass('score-to-canonical-state helper removed');
 assert.match(source, /trackBProgress:trackBProgressFromScore\(score\)/); pass('Track B uses local progress field');
-assert.match(source, /const RUNTIME_ENABLED = false;/); pass('student runtime remains audit-blocked');
+assert.match(source, /const RUNTIME_ENABLED = true;/); pass('audited pilot build flag is enabled');
 
 // Access capture.
 assert.match(source, /selector\.value="SYSTEM_READ_ALOUD"/); pass('system read-aloud records actual access condition');
