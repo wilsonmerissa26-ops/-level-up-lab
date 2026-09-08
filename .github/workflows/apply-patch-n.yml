@@ -1,0 +1,60 @@
+name: Apply Patch N iPad Pilot Unlock
+
+on:
+  push:
+    branches:
+      - patch-n-ipad-pilot-unlock
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'Patch N: add one-time apply workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: patch-n-ipad-pilot-unlock
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply Patch N transformations
+        run: python scripts/apply-patch-n.py
+      - name: Syntax check patched build
+        run: |
+          node --check app.js
+          node --check runtime-gate.js
+          node --check storage-durability.js
+          node --check state-integrity.js
+          node --check audit-browser.js
+          node --check synthetic-e2e.js
+      - name: Run permanent audit suites
+        run: |
+          node tests/audit-regression.test.mjs
+          node tests/persistence-slice-d.test.mjs
+          node tests/review-slice-e.test.mjs
+          node tests/track-a-engine.test.mjs
+          node tests/track-a-diagnostic.test.mjs
+          node tests/track-a-ui-adapter.test.mjs
+          node tests/track-a-paths-h.test.mjs
+          node tests/track-a-adaptive-ui-h.test.mjs
+          node tests/track-a-mastery-i.test.mjs
+          node tests/track-a-mastery-state-i.test.mjs
+          node tests/track-a-mastery-ui-i.test.mjs
+          node tests/release-integrity-j.test.mjs
+          node tests/storage-durability-k.test.mjs
+          node tests/revision-integrity-k.test.mjs
+          node tests/patch-k-ui-integration.test.mjs
+          node tests/primary-missing-recovery-l.test.mjs
+          node tests/synthetic-e2e-m.test.mjs
+          node tests/runtime-gate-n.test.mjs
+      - name: Commit Patch N and remove temporary apply artifacts
+        run: |
+          rm -f scripts/apply-patch-n.py .github/workflows/apply-patch-n.yml
+          git config user.name "wilsonmerissa26-ops"
+          git config user.email "wilsonmerissa26@gmail.com"
+          git add -A
+          git commit -m "Patch N: unlock audited iPad Home Screen pilot"
+          git push origin HEAD:patch-n-ipad-pilot-unlock
